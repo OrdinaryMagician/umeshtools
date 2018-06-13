@@ -26,12 +26,6 @@ typedef struct
 	uint8_t texnum;
 	uint8_t flags; /* unused */
 } __attribute__((packed)) datapoly_t;
-#define NORMAL_ONESIDED      0x00
-#define NORMAL_TWOSIDED      0x01
-#define TRANSLUCENT_TWOSIDED 0x02
-#define MASKED_TWOSIDED      0x03
-#define MODULATED_TWOSIDED   0x04
-#define WEAPON_TRIANGLE      0x08
 typedef struct
 {
 	uint16_t numframes;
@@ -40,7 +34,7 @@ typedef struct
 
 const char* typestr( uint8_t type )
 {
-	switch ( type )
+	switch ( type&0x7 )
 	{
 	case 0:
 		return "normal";
@@ -52,11 +46,22 @@ const char* typestr( uint8_t type )
 		return "masked";
 	case 4:
 		return "modulated";
-	case 8:
-		return "weapon triangle";
 	default:
 		return "unknown";
 	}
+}
+
+char tstr[256] = {0};
+
+const char *pflags( uint8_t type )
+{
+	tstr[0] = 0;
+	if ( type&0x8 ) strcat(tstr," [weapon triangle]");
+	if ( type&0x10 ) strcat(tstr," [unlit]");
+	if ( type&0x20 ) strcat(tstr," [curvy]");
+	if ( type&0x40 ) strcat(tstr," [enviromap]");
+	if ( type&0x80 ) strcat(tstr," [nosmooth]");
+	return tstr;
 }
 
 int16_t unpackuvert( uint32_t v, int c )
@@ -128,11 +133,12 @@ int main( int argc, char **argv )
 			return 8;
 		}
 		printf("POLY %d\n vertices %hu %hu %hu\n"
-			" type %s (%hhx)\n color %hhu\n"
+			" type %s%s (%hhu 0x%02hhx)\n color %hhu\n"
 			" uvs %hhu,%hhu %hhu,%hhu %hhu,%hhu\n"
 			" texnum %hhx\n flags %hhx\n",i,dpoly.vertices[0],
 			dpoly.vertices[1],dpoly.vertices[2],
-			typestr(dpoly.type),dpoly.type,dpoly.color,
+			typestr(dpoly.type),pflags(dpoly.type),
+			dpoly.type&0x7,dpoly.type&0xf8,dpoly.color,
 			dpoly.uv[0][0],dpoly.uv[0][1],dpoly.uv[1][0],
 			dpoly.uv[1][1],dpoly.uv[2][0],dpoly.uv[2][1],
 			dpoly.texnum,dpoly.flags);

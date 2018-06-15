@@ -592,11 +592,11 @@ void savemodel( char *name, int islodmesh, int version )
 		mesh.tris[j].uv[2][0] =
 			lodmesh.wedges[lodmesh.faces[i].wedges[2]].st[0];
 		mesh.tris[j].uv[0][1] =
-			255-lodmesh.wedges[lodmesh.faces[i].wedges[0]].st[1];
+			lodmesh.wedges[lodmesh.faces[i].wedges[0]].st[1];
 		mesh.tris[j].uv[1][1] =
-			255-lodmesh.wedges[lodmesh.faces[i].wedges[1]].st[1];
+			lodmesh.wedges[lodmesh.faces[i].wedges[1]].st[1];
 		mesh.tris[j].uv[2][1] =
-			255-lodmesh.wedges[lodmesh.faces[i].wedges[2]].st[1];
+			lodmesh.wedges[lodmesh.faces[i].wedges[2]].st[1];
 		mesh.tris[j].flags =
 			lodmesh.materials[lodmesh.faces[i].material].flags;
 		mesh.tris[j].texnum =

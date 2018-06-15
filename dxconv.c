@@ -84,7 +84,7 @@ int main( int argc, char **argv )
 	hout.numframes = hin.numframes;
 	hout.framesize = mode?(hin.framesize/2):(hin.framesize*2);
 	fwrite(&hout,sizeof(aniheader_t),1,fout);
-	int nverts = mode?(hin.framesize/8):(hin.framesize/4);
+	int nverts = (mode?(hin.framesize/8):(hin.framesize/4))*hin.numframes;
 	for ( int i=0; i<nverts; i++ )
 	{
 		if ( mode )

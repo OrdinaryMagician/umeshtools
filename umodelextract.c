@@ -162,6 +162,27 @@ int32_t getimport( int index )
 	return iname;
 }
 
+// fully read import table entry
+void readimport2( int32_t *cpkg, int32_t *cname, int32_t *pkg, int32_t *name )
+{
+	*cpkg = readindex();
+	*cname = readindex();
+	if ( head->pkgver >= 60 ) *pkg = readdword();
+	else *pkg = readindex();
+	*name = readindex();
+}
+
+void getimport2( int index, int32_t *cpkg, int32_t *cname, int32_t *pkg,
+	int32_t *name )
+{
+	size_t prev = fpos;
+	fpos = head->oimports;
+	for ( int i=0; i<=index; i++ )
+		readimport2(cpkg,cname,pkg,name);
+	fpos = prev;
+}
+
+// read export table entry
 void readexport( int32_t *class, int32_t *ofs, int32_t *siz, int32_t *name )
 {
 	*class = readindex();
@@ -173,6 +194,40 @@ void readexport( int32_t *class, int32_t *ofs, int32_t *siz, int32_t *name )
 	if ( *siz > 0 ) *ofs = readindex();
 }
 
+void getexport( int index, int32_t *class, int32_t *ofs, int32_t *siz,
+	int32_t *name )
+{
+	size_t prev = fpos;
+	fpos = head->oexports;
+	for ( int i=0; i<=index; i++ )
+		readexport(class,ofs,siz,name);
+	fpos = prev;
+}
+
+// fully read export table entry
+void readexport2( int32_t *class, int32_t *super, int32_t *pkg, int32_t *name,
+	uint32_t *flags, int32_t *siz, int32_t *ofs )
+{
+	*class = readindex();
+	*super = readindex();
+	if ( head->pkgver >= 60 ) *pkg = readdword();
+	else *pkg = readindex();
+	*name = readindex();
+	*flags = readdword();
+	*siz = readindex();
+	if ( *siz > 0 ) *ofs = readindex();
+}
+
+void getexport2( int index, int32_t *class, int32_t *super, int32_t *pkg,
+	int32_t *name, uint32_t *flags, int32_t *siz, int32_t *ofs )
+{
+	size_t prev = fpos;
+	fpos = head->oexports;
+	for ( int i=0; i<=index; i++ )
+		readexport2(class,super,pkg,name,flags,siz,ofs);
+	fpos = prev;
+}
+
 typedef struct
 {
 	float x, y, z;
@@ -180,7 +235,7 @@ typedef struct
 
 typedef struct
 {
-	float pitch, yaw, roll;
+	int32_t pitch, yaw, roll;
 } __attribute__((packed)) rotator_t;
 
 typedef struct
@@ -214,7 +269,7 @@ typedef struct
 
 typedef struct
 {
-	uint32_t time;
+	float time;
 	int32_t function;
 } __attribute__((packed)) animfunction_t;
 
@@ -282,13 +337,13 @@ typedef struct
 typedef struct
 {
 	uint32_t collapsepointthus_count;
-	uint16_t *collapsepointthuss;
+	uint16_t *collapsepointthus;
 	uint32_t facelevel_count;
 	uint16_t *facelevels;
 	uint32_t faces_count;
 	lodface_t *faces;
 	uint32_t collapsewedgethus_count;
-	uint16_t *collapsewedgethuss;
+	uint16_t *collapsewedgethus;
 	uint32_t wedges_count;
 	wedge_t *wedges;
 	uint32_t materials_count;
@@ -372,10 +427,47 @@ uint8_t typefromflags( uint32_t flags )
 	return out;
 }
 
+// construct full name for object
+// shamelessly recycled from my old upackage project
+void imprefix( FILE *f, int32_t i );
+void exprefix( FILE *f, int32_t i );
+void imprefix( FILE *f, int32_t i )
+{
+	int32_t cpkg, cnam, pkg, nam;
+	getimport2(i,&cpkg,&cnam,&pkg,&nam);
+	if ( pkg < 0 ) imprefix(f,-pkg-1);
+	else if ( pkg > 0 ) exprefix(f,pkg-1);
+	if ( pkg ) fprintf(f,".");
+	int32_t l;
+	char *pname = (char*)(pkgfile+getname(nam,&l));
+	fprintf(f,"%.*s",l,pname);
+}
+void exprefix( FILE *f, int32_t i )
+{
+	int32_t cls, sup, pkg, nam, siz, ofs;
+	uint32_t fl;
+	getexport2(i,&cls,&sup,&pkg,&nam,&fl,&siz,&ofs);
+	if ( pkg > 0 )
+	{
+		exprefix(f,pkg-1);
+		fprintf(f,".");
+	}
+	int32_t l;
+	char *pname = (char*)(pkgfile+getname(nam,&l));
+	fprintf(f,"%.*s",l,pname);
+}
+void construct_fullname( FILE *f, int32_t i )
+{
+	if ( i > 0 ) exprefix(f,i-1);
+	else if ( i < 0 ) imprefix(f,-i-1);
+	else fprintf(f,"None");
+}
+
 // let the horrendous clusterfuck begin
-void savemodel( char *name, int islodmesh, int version )
+void savemodel( int32_t namelen, char *name, int islodmesh, int version )
 {
 	char fname[256] = {0};
+	size_t prev = fpos;
 	FILE *f;
 	int isdeusex;
 	mesh_t mesh;
@@ -440,7 +532,7 @@ void savemodel( char *name, int islodmesh, int version )
 			j++ )
 		{
 			mesh.animseqs[i].functions[j].time =
-				readdword();
+				readfloat();
 			mesh.animseqs[i].functions[j].function =
 				readindex();
 		}
@@ -453,7 +545,8 @@ void savemodel( char *name, int islodmesh, int version )
 		*sizeof(connect_t));
 	fpos = mesh.connects_jump;
 	READSTRUCT(mesh.boundingbox2,boundingbox_t)
-	READSTRUCT(mesh.boundingsphere2,boundingsphere_t)
+	if ( version > 61 ) READSTRUCT(mesh.boundingsphere2,boundingsphere_t)
+	else READSTRUCT(mesh.boundingsphere2,boundingsphere_61pre_t)
 	mesh.vertlinks_jump = readdword();
 	mesh.vertlinks_count = readindex();
 	mesh.vertlinks = calloc(mesh.vertlinks_count,4);
@@ -472,7 +565,11 @@ void savemodel( char *name, int islodmesh, int version )
 	mesh.boundingspheres = calloc(mesh.boundingspheres_count,
 		sizeof(boundingsphere_t));
 	for ( uint32_t i=0; i<mesh.boundingspheres_count; i++ )
-		READSTRUCT(mesh.boundingspheres[i],boundingsphere_t)
+	{
+		if ( version > 61 )
+			READSTRUCT(mesh.boundingspheres[i],boundingsphere_t)
+		else READSTRUCT(mesh.boundingspheres[i],boundingsphere_61pre_t)
+	}
 	mesh.frameverts = readdword();
 	mesh.animframes = readdword();
 	mesh.andflags = readdword();
@@ -500,11 +597,136 @@ void savemodel( char *name, int islodmesh, int version )
 		mesh.texturelod_count = 0;
 		mesh.texturelods = 0;
 	}
+	snprintf(fname,256,"%.*s.txt",namelen,name);
+	f = fopen(fname,"w");
+	printf(" Dumping Mesh structure to %s\n",fname);
+	fprintf(f,"BoundingBox: (Min: (X=%g, Y=%g, Z=%g)),"
+		" (Max: (X=%g, Y=%g, Z=%g)), IsValid: %hhu)\n",
+		mesh.boundingbox.min.x,mesh.boundingbox.min.y,
+		mesh.boundingbox.min.z,mesh.boundingbox.max.x,
+		mesh.boundingbox.max.y,mesh.boundingbox.max.z,
+		mesh.boundingbox.isvalid);
+	fprintf(f,"BoundingSphere: (X=%g, Y=%g, Z=%g, W=%g)\n",
+		mesh.boundingsphere.position.x,
+		mesh.boundingsphere.position.y,
+		mesh.boundingsphere.position.z,
+		mesh.boundingsphere.w);
+	fprintf(f,"Verts_Jump: %lu\n",mesh.verts_jump-prev);
+	fprintf(f,"Verts_Count: %u\n",mesh.verts_count);
+	for ( uint32_t i=0; i<mesh.verts_count; i++ )
+	{
+		if ( isdeusex )
+			fprintf(f," Verts[%u]: (X=%hd, Y=%hd, Z=%hd, P=%hd)\n",
+				i,mesh.verts_dx[i].x,mesh.verts_dx[i].y,
+				mesh.verts_dx[i].z,mesh.verts_dx[i].pad);
+		else fprintf(f," Verts[%u]: (X=%hd, Y=%hd, Z=%hd, V=0x%08x)\n",
+				i,unpackuvert(mesh.verts_ue1[i],0),
+				unpackuvert(mesh.verts_ue1[i],1),
+				unpackuvert(mesh.verts_ue1[i],2),
+				mesh.verts_ue1[i]);
+	}
+	fprintf(f,"Tris_Jump: %lu\n",mesh.tris_jump-prev);
+	fprintf(f,"Tris_Count: %u\n",mesh.tris_count);
+	for ( uint32_t i=0; i<mesh.tris_count; i++ )
+		fprintf(f," Tri[%u]: (Verts: (%hu, %hu, %hu),"
+				" UV: ((%hhu,%hhu),(%hhu,%hhu),(%hhu,%hhu)),"
+				" Flags: 0x%08x, TexNum: %u)\n",i,
+				mesh.tris[i].verts[0],mesh.tris[i].verts[1],
+				mesh.tris[i].verts[2],mesh.tris[i].uv[0][0],
+				mesh.tris[i].uv[0][1],mesh.tris[i].uv[1][0],
+				mesh.tris[i].uv[1][1],mesh.tris[i].uv[2][0],
+				mesh.tris[i].uv[2][1],mesh.tris[i].flags,
+				mesh.tris[i].texnum);
+	fprintf(f,"AnimSeqs_Count: %u\n",mesh.animseqs_count);
+	for ( uint32_t i=0; i<mesh.animseqs_count; i++ )
+	{
+		int32_t l = 0;
+		char *pname =
+			(char*)(pkgfile+getname(mesh.animseqs[i].group,&l));
+		fprintf(f," AnimSeq[%u]: (Group: \"%.*s\",",i,l,pname);
+		pname = (char*)(pkgfile+getname(mesh.animseqs[i].name,&l));
+		fprintf(f," Name: \"%.*s\", Start_Frame: %u,"
+			" Num_Frames: %u, Function_Count: %u, Rate: %g)\n",l,
+			pname,mesh.animseqs[i].start_frame,
+			mesh.animseqs[i].num_frames,
+			mesh.animseqs[i].function_count,
+			mesh.animseqs[i].rate);
+		for ( uint32_t j=0; j<mesh.animseqs[i].function_count; j++ )
+		{
+			pname = (char*)(pkgfile+getname(mesh.animseqs[i]
+				.functions[j].function,&l));
+			fprintf(f,"  Functions[%u]: (Time: %g,"
+				" Function: %.*s)\n",j,
+				mesh.animseqs[i].functions[j].time,l,pname);
+		}
+	}
+	fprintf(f,"Connects_Jump: %lu\n",mesh.connects_jump-prev);
+	fprintf(f,"Connects_Count: %u\n",mesh.connects_count);
+	for ( uint32_t i=0; i<mesh.connects_count; i++ )
+		fprintf(f," Connects[%u]: (NumVertTriangles: %u,"
+			" TriangleListOffset: %u)\n",i,
+			mesh.connects[i].numverttriangles,
+			mesh.connects[i].trianglelistoffset);
+	fprintf(f,"BoundingBox: (Min: (X=%g, Y=%g, Z=%g)),"
+		" (Max: (X=%g, Y=%g, Z=%g), IsValid: %hhu)\n",
+		mesh.boundingbox2.min.x,mesh.boundingbox2.min.y,
+		mesh.boundingbox2.min.z,mesh.boundingbox2.max.x,
+		mesh.boundingbox2.max.y,mesh.boundingbox2.max.z,
+		mesh.boundingbox2.isvalid);
+	fprintf(f,"BoundingSphere: (X=%g, Y=%g, Z=%g, W=%g)\n",
+		mesh.boundingsphere2.position.x,
+		mesh.boundingsphere2.position.y,
+		mesh.boundingsphere2.position.z,
+		mesh.boundingsphere2.w);
+	fprintf(f,"VertLinks_Jump: %lu\n",mesh.vertlinks_jump-prev);
+	fprintf(f,"VertLinks_Count: %u\n",mesh.vertlinks_count);
+	for ( uint32_t i=0; i<mesh.vertlinks_count; i++ )
+		fprintf(f," VertLinks[%u]: %u\n",i,mesh.vertlinks[i]);
+	fprintf(f,"Textures_Count: %u\n",mesh.textures_count);
+	for ( uint32_t i=0; i<mesh.textures_count; i++ )
+	{
+		fprintf(f," Textures[%u]: \"",i);
+		construct_fullname(f,mesh.textures[i]);
+		fprintf(f,"\"\n");
+	}
+	fprintf(f,"BoundingBoxes_Count: %u\n",mesh.boundingboxes_count);
+	for ( uint32_t i=0; i<mesh.boundingboxes_count; i++ )
+		fprintf(f," BoundingBoxes[%u]: (Min: (X=%g, Y=%g, Z=%g)),"
+			" (Max: (X=%g, Y=%g, Z=%g)), IsValid: %hhu)\n",i,
+			mesh.boundingboxes[i].min.x,
+			mesh.boundingboxes[i].min.y,
+			mesh.boundingboxes[i].min.z,
+			mesh.boundingboxes[i].max.x,
+			mesh.boundingboxes[i].max.y,
+			mesh.boundingboxes[i].max.z,
+			mesh.boundingboxes[i].isvalid);
+	fprintf(f,"BoundingSpheres_Count: %u\n",mesh.boundingspheres_count);
+	for ( uint32_t i=0; i<mesh.boundingspheres_count; i++ )
+	fprintf(f," BoundingSpheres[%u]: (X=%g, Y=%g, Z=%g, W=%g)\n",i,
+			mesh.boundingspheres[i].position.x,
+			mesh.boundingspheres[i].position.y,
+			mesh.boundingspheres[i].position.z,
+			mesh.boundingspheres[i].w);
+	fprintf(f,"FrameVerts: %u\n",mesh.frameverts);
+	fprintf(f,"AnimFrames: %u\n",mesh.animframes);
+	fprintf(f,"ANDFlags: 0x%08x\n",mesh.andflags);
+	fprintf(f,"ORFlags: 0x%08x\n",mesh.orflags);
+	fprintf(f,"Scale: (X=%g, Y=%g, Z=%g)\n",mesh.scale.x,mesh.scale.y,
+		mesh.scale.z);
+	fprintf(f,"Origin: (X=%g, Y=%g, Z=%g)\n",mesh.origin.x,mesh.origin.y,
+		mesh.origin.z);
+	fprintf(f,"RotOrigin: (Pitch=%d, Yaw=%d, Roll=%d)\n",
+		mesh.rotorigin.pitch,mesh.rotorigin.yaw,mesh.rotorigin.roll);
+	fprintf(f,"CurPoly: %u\n",mesh.curpoly);
+	fprintf(f,"CurVertex: %u\n",mesh.curvertex);
+	fprintf(f,"TextureLOD_Count: %u\n",mesh.texturelod_count);
+	for ( uint32_t i=0; i<mesh.texturelod_count; i++ )
+		fprintf(f," TextureLODs[%u]: %g\n",i,mesh.texturelods[i]);
 	if ( !islodmesh ) goto finish;
 	lodmesh.collapsepointthus_count = readindex();
-	lodmesh.collapsepointthuss =
+	lodmesh.collapsepointthus =
 		calloc(lodmesh.collapsepointthus_count,2);
-	memcpy(lodmesh.collapsepointthuss,pkgfile+fpos,
+	memcpy(lodmesh.collapsepointthus,pkgfile+fpos,
 		lodmesh.collapsepointthus_count*2);
 	fpos += lodmesh.collapsepointthus_count*2;
 	lodmesh.facelevel_count = readindex();
@@ -518,9 +740,9 @@ void savemodel( char *name, int islodmesh, int version )
 		*sizeof(lodface_t));
 	fpos += lodmesh.faces_count*sizeof(lodface_t);
 	lodmesh.collapsewedgethus_count = readindex();
-	lodmesh.collapsewedgethuss =
+	lodmesh.collapsewedgethus =
 		calloc(lodmesh.collapsewedgethus_count,2);
-	memcpy(lodmesh.collapsewedgethuss,pkgfile+fpos,
+	memcpy(lodmesh.collapsewedgethus,pkgfile+fpos,
 		lodmesh.collapsewedgethus_count*2);
 	fpos += lodmesh.collapsewedgethus_count*2;
 	lodmesh.wedges_count = readindex();
@@ -553,11 +775,62 @@ void savemodel( char *name, int islodmesh, int version )
 		*2);
 	fpos += lodmesh.remapanimverts_count*2;
 	lodmesh.oldframeverts = readdword();
+	printf(" Dumping LodMesh structure to %s\n",fname);
+	fprintf(f,"CollapsePointThus_Count: %u\n",
+		lodmesh.collapsepointthus_count);
+	for ( uint32_t i=0; i<lodmesh.collapsepointthus_count; i++ )
+		fprintf(f," CollapsePointThus[%u]: %hu\n",i,
+			lodmesh.collapsepointthus[i]);
+	fprintf(f,"FaceLevel_Count: %u\n",lodmesh.facelevel_count);
+	for ( uint32_t i=0; i<lodmesh.facelevel_count; i++ )
+		fprintf(f," FaceLevels[%u]: %hu\n",i,lodmesh.facelevels[i]);
+	fprintf(f,"Faces_Count: %u\n",lodmesh.faces_count);
+	for ( uint32_t i=0; i<lodmesh.faces_count; i++ )
+		fprintf(f," Faces[%u]: (Wedges: (%hu, %hu, %hu),"
+			" Material: %hu)\n",i,lodmesh.faces[i].wedges[0],
+			lodmesh.faces[i].wedges[1],
+			lodmesh.faces[i].wedges[2],
+			lodmesh.faces[i].material);
+	fprintf(f,"CollapseWedgeThus_Count: %u\n",
+		lodmesh.collapsewedgethus_count);
+	for ( uint32_t i=0; i<lodmesh.collapsewedgethus_count; i++ )
+		fprintf(f," CollapseWedgeThus[%u]: %hu\n",i,
+			lodmesh.collapsewedgethus[i]);
+	fprintf(f,"Wedges_Count: %u\n",lodmesh.wedges_count);
+	for ( uint32_t i=0; i<lodmesh.wedges_count; i++ )
+		fprintf(f," Wedges[%u]: (Vertex: %hu, ST: (%hhu, %hhu))\n",
+			i,lodmesh.wedges[i].vertex,lodmesh.wedges[i].st[0],
+			lodmesh.wedges[i].st[1]);
+	fprintf(f,"Materials_Count: %u\n",lodmesh.materials_count);
+	for ( uint32_t i=0; i<lodmesh.materials_count; i++ )
+		fprintf(f," Materials[%u]: (Flags: 0x%08x, TexNum: %u)\n",i,
+			lodmesh.materials[i].flags,
+			lodmesh.materials[i].texnum);
+	fprintf(f,"SpecialFaces_Count: %u\n",lodmesh.specialfaces_count);
+	for ( uint32_t i=0; i<lodmesh.specialfaces_count; i++ )
+		fprintf(f," SpecialFaces[%u]: (Wedges: (%hu, %hu, %hu),"
+			" Material: %hu)\n",i,
+			lodmesh.specialfaces[i].wedges[0],
+			lodmesh.specialfaces[i].wedges[1],
+			lodmesh.specialfaces[i].wedges[2],
+			lodmesh.specialfaces[i].material);
+	fprintf(f,"ModelVerts: %u\n",lodmesh.modelverts);
+	fprintf(f,"SpecialVerts: %u\n",lodmesh.specialverts);
+	fprintf(f,"MeshScaleMax: %g\n",lodmesh.meshscalemax);
+	fprintf(f,"LODHysteresis: %g\n",lodmesh.lodhysteresis);
+	fprintf(f,"LODStrength: %g\n",lodmesh.lodstrength);
+	fprintf(f,"LODMinVerts: %u\n",lodmesh.lodminverts);
+	fprintf(f,"LODZDistance: %g\n",lodmesh.lodmorph);
+	fprintf(f,"LODMorph: %g\n",lodmesh.lodzdistance);
+	fprintf(f,"RemapAnimVerts_Count: %u\n",lodmesh.remapanimverts_count);
+	for ( uint32_t i=0; i<lodmesh.remapanimverts_count; i++ )
+		fprintf(f," RemapAnimVerts[%u]: %hu\n",i,
+			lodmesh.remapanimverts[i]);
+	fprintf(f,"OldFrameVerts: %u\n",lodmesh.oldframeverts);
 	// construct the true faces from the lodmesh data
 	printf(" Converting LodMesh back to Mesh\n");
 	mesh.tris_count = lodmesh.faces_count+lodmesh.specialfaces_count;
 	mesh.tris = calloc(mesh.tris_count,sizeof(tri_t));
-	// sweet mother of lord jesus look at all that hot mess
 	uint32_t j = 0;
 	for ( uint32_t i=0; i<lodmesh.specialfaces_count; i++ )
 	{
@@ -576,6 +849,7 @@ void savemodel( char *name, int islodmesh, int version )
 	for ( uint32_t i=0; i<lodmesh.faces_count; i++ )
 	{
 		j = lodmesh.specialfaces_count+i;
+		// sweet mother of lord jesus look at all that hot mess
 		mesh.tris[j].verts[0] =
 			lodmesh.wedges[lodmesh.faces[i].wedges[0]].vertex
 			+lodmesh.specialverts;
@@ -603,8 +877,9 @@ void savemodel( char *name, int islodmesh, int version )
 			lodmesh.materials[lodmesh.faces[i].material].texnum;
 	}
 finish:
+	fclose(f);
 	// export anivfile
-	snprintf(fname,256,"%s_a.3d",name);
+	snprintf(fname,256,"%.*s_a.3d",namelen,name);
 	f = fopen(fname,"wb");
 	aniheader_t ahead =
 	{
@@ -618,7 +893,7 @@ finish:
 	else fwrite(mesh.verts_ue1,4,mesh.verts_count,f);
 	fclose(f);
 	// export datafile
-	snprintf(fname,256,"%s_d.3d",name);
+	snprintf(fname,256,"%.*s_d.3d",namelen,name);
 	f = fopen(fname,"wb");
 	dataheader_t dhead;
 	// gotta clean up all that bogus data
@@ -667,10 +942,10 @@ finish:
 	free(mesh.boundingspheres);
 	free(mesh.texturelods);
 	if ( !islodmesh ) return;
-	free(lodmesh.collapsepointthuss);
+	free(lodmesh.collapsepointthus);
 	free(lodmesh.facelevels);
 	free(lodmesh.faces);
-	free(lodmesh.collapsewedgethuss);
+	free(lodmesh.collapsewedgethus);
 	free(lodmesh.wedges);
 	free(lodmesh.materials);
 	free(lodmesh.specialfaces);
@@ -737,6 +1012,13 @@ int main( int argc, char **argv )
 		if ( !ismesh && !islodmesh ) continue;
 		char *mdl = (char*)(pkgfile+getname(name,&l));
 		printf("%s found: %.*s\n",islodmesh?"LodMesh":"Mesh",l,mdl);
+		int32_t mdll = l;
+		char fname[256] = {0};
+		snprintf(fname,256,"%.*s.dat",mdll,mdl);
+		printf(" Dumping full object data to %s\n",fname);
+		FILE *f = fopen(fname,"wb");
+		fwrite(pkgfile+ofs,siz,1,f);
+		fclose(f);
 		// begin reading data
 		size_t prev = fpos;
 		fpos = ofs;
@@ -788,7 +1070,7 @@ retry:
 			pname = (char*)(pkgfile+getname(prop,&l));
 			goto retry;
 		}
-		savemodel(mdl,islodmesh,head->pkgver);
+		savemodel(mdll,mdl,islodmesh,head->pkgver);
 		fpos = prev;
 	}
 	free(pkgfile);

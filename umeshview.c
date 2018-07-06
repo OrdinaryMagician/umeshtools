@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <errno.h>
 #include "protoagl.h"
 
 typedef struct
@@ -87,9 +88,9 @@ long ticker( void )
 	return ts.tv_nsec+ts.tv_sec*NANOS_SEC;
 }
 
-int main( int argc, char **argv )
+int main( /*int argc, char **argv*/ )
 {
-	FILE *datafile, *anivfile;
+/*	FILE *datafile, *anivfile;
 	if ( argc < 3 )
 	{
 		fprintf(stderr,"usage: umeshview <anivfile> <datafile>\n");
@@ -116,7 +117,7 @@ int main( int argc, char **argv )
 
 	int *used = calloc(sizeof(int),256);
 	int *refs = calloc(sizeof(int),dhead.numverts);
-
+*/
 	// TODO load mesh data
 
 	SDL_Init(SDL_INIT_VIDEO|SDL_INIT_EVENTS);

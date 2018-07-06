@@ -10,6 +10,9 @@
 
 #define UPKG_MAGIC 0x9E2A83C1
 
+// uncomment if you want full data dumps, helpful if you need to reverse engineer some unsupported format
+//#define _DEBUG 1
+
 typedef struct
 {
 	uint32_t magic;
@@ -482,7 +485,9 @@ void savemodel( int32_t namelen, char *name, int islodmesh, int version )
 	mesh.verts_count = readindex();
 	if ( version <= 61 ) mesh.verts_jump = fpos+mesh.verts_count*4;
 	// check for deus ex format
-	if ( (mesh.verts_jump-fpos)/mesh.verts_count == 4 )
+	// corner case: mesh with zero vertices (thanks, klingon honor guard)
+	if ( (mesh.verts_count == 0)
+		|| (mesh.verts_jump-fpos)/mesh.verts_count == 4 )
 	{
 		isdeusex = 0;
 		printf(" DETECTED STANDARD FORMAT\n");
@@ -538,8 +543,11 @@ void savemodel( int32_t namelen, char *name, int islodmesh, int version )
 		}
 		mesh.animseqs[i].rate = readfloat();
 	}
-	mesh.connects_jump = readdword();
+	if ( version > 61 ) mesh.connects_jump = readdword();
 	mesh.connects_count = readindex();
+	if ( version <= 61 )
+		mesh.connects_jump = fpos
+			+mesh.connects_count*sizeof(connect_t);
 	mesh.connects = calloc(mesh.connects_count,sizeof(connect_t));
 	memcpy(mesh.connects,pkgfile+fpos,mesh.connects_count
 		*sizeof(connect_t));
@@ -547,8 +555,10 @@ void savemodel( int32_t namelen, char *name, int islodmesh, int version )
 	READSTRUCT(mesh.boundingbox2,boundingbox_t)
 	if ( version > 61 ) READSTRUCT(mesh.boundingsphere2,boundingsphere_t)
 	else READSTRUCT(mesh.boundingsphere2,boundingsphere_61pre_t)
-	mesh.vertlinks_jump = readdword();
+	if ( version > 61 ) mesh.vertlinks_jump = readdword();
 	mesh.vertlinks_count = readindex();
+	if ( version <= 61 )
+		mesh.vertlinks_jump = fpos+mesh.vertlinks_count*4;
 	mesh.vertlinks = calloc(mesh.vertlinks_count,4);
 	memcpy(mesh.vertlinks,pkgfile+fpos,mesh.vertlinks_count*4);
 	fpos = mesh.vertlinks_jump;
@@ -995,6 +1005,11 @@ int main( int argc, char **argv )
 		free(pkgfile);
 		return 4;
 	}
+	if ( head->pkgver == 73 )
+		printf(" DS9: The Fallen / Klingon Honor Guard package"
+			" detected.\nThese games use a completely different,"
+			" undocumented mesh structure. For now only raw data"
+			" will be exported.\n");
 	// loop through exports and search for models
 	fpos = head->oexports;
 	for ( uint32_t i=0; i<head->nexports; i++ )
@@ -1013,12 +1028,14 @@ int main( int argc, char **argv )
 		char *mdl = (char*)(pkgfile+getname(name,&l));
 		printf("%s found: %.*s\n",islodmesh?"LodMesh":"Mesh",l,mdl);
 		int32_t mdll = l;
+#ifdef _DEBUG
 		char fname[256] = {0};
-		snprintf(fname,256,"%.*s.dat",mdll,mdl);
+		snprintf(fname,256,"%.*s.object",mdll,mdl);
 		printf(" Dumping full object data to %s\n",fname);
 		FILE *f = fopen(fname,"wb");
 		fwrite(pkgfile+ofs,siz,1,f);
 		fclose(f);
+#endif
 		// begin reading data
 		size_t prev = fpos;
 		fpos = ofs;
@@ -1070,6 +1087,15 @@ retry:
 			pname = (char*)(pkgfile+getname(prop,&l));
 			goto retry;
 		}
+#ifdef _DEBUG
+		snprintf(fname,256,"%.*s.%s",mdll,mdl,
+			islodmesh?"lodmesh":"mesh");
+		printf(" Dumping full mesh struct to %s\n",fname);
+		f = fopen(fname,"wb");
+		fwrite(pkgfile+fpos,siz-(fpos-ofs),1,f);
+		fclose(f);
+#endif
+		if ( head->pkgver == 73 ) continue;
 		savemodel(mdll,mdl,islodmesh,head->pkgver);
 		fpos = prev;
 	}

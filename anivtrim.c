@@ -8,8 +8,8 @@ int main( int argc, char **argv )
 {
 	if ( argc < 5 )
 	{
-		fprintf(stderr,"usage: umodeltrimframes <infile> <outfile>"
-			"<start> <length>\n");
+		fprintf(stderr,"usage: anivtrim <infile> <outfile>"
+			" <start> <length>\n");
 		return 1;
 	}
 	FILE *fin, *fout;
@@ -34,7 +34,7 @@ int main( int argc, char **argv )
 	sscanf(argv[3],"%d",&start);
 	sscanf(argv[4],"%d",&num);
 	if ( num+start > nframes ) num = nframes-start;
-	uint16_t nnframes = (num-start);
+	uint16_t nnframes = nframes-num;
 	fwrite(&nnframes,2,1,fout);
 	fwrite(&fsize,2,1,fout);
 	int cursor = 0, j = 0;
@@ -44,7 +44,9 @@ int main( int argc, char **argv )
 		else
 		{
 			fwrite(framedata+cursor,1,fsize,fout);
-			if ( i != j ) printf("%d is now %d\n",i,j++);
+			if ( i != j ) printf("%d is now %d\n",i,j);
+			else printf("%d ignored\n",i);
+			j++;
 		}
 		cursor += fsize;
 	}

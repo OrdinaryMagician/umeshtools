@@ -39,3 +39,4 @@ format.
   mesh export, where it effectively ignores LodMesh materials and instead comes
   up with its own indices. Included for backwards compatibility with stuff that
   expects this sort of nonsense.
+- **umesh2obj** : Creates .obj files for each frame of a mesh.

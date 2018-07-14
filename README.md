@@ -17,10 +17,10 @@ format.
   undesired results. vertmerge is available as a manual alternative.
 - **vertmerge** : [TODO] Merges all specified vertices together as long as they
   have the same position in all frames.
-- **umeshview** : Small SDL2 program for displaying models. Left click drag to
-  rotate camera, right click drag to move, mouse wheel for zoom. Page up and
-  page down switch between animation frames. Texture groups are color coded,
-  unreferenced vertices show as red crosses. Requires SDL2 (obviously).
+- **umeshview** : [TODO] Small SDL2 program for displaying models. Left click
+  drag to rotate camera, right click drag to move, mouse wheel for zoom. Page
+  up and page down switch between animation frames. Texture groups are color
+  coded, unreferenced vertices show as red crosses. Requires SDL2 (obviously).
 - **umesh** : [TODO] The big boy, the visual mesh editor that I initially
   planned to make. Once this one is done, all the other tools will be obsolete.
 - **umodelextract** : A horrible abomination of C code that extracts meshes

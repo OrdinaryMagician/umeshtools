@@ -84,12 +84,13 @@ float avg_fps( float nt )
 long ticker( void )
 {
 	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC_RAW,&ts);
+	clock_gettime(CLOCK_MONOTONIC,&ts);
 	return ts.tv_nsec+ts.tv_sec*NANOS_SEC;
 }
 
-int main( /*int argc, char **argv*/ )
+int main( int argc, char **argv )
 {
+	(void)argc, (void)argv;
 /*	FILE *datafile, *anivfile;
 	if ( argc < 3 )
 	{
@@ -121,7 +122,7 @@ int main( /*int argc, char **argv*/ )
 	// TODO load mesh data
 
 	SDL_Init(SDL_INIT_VIDEO|SDL_INIT_EVENTS);
-	SDL_Window *win = SDL_CreateWindow("RasterTest",SDL_WINDOWPOS_UNDEFINED,
+	SDL_Window *win = SDL_CreateWindow("umeshview",SDL_WINDOWPOS_UNDEFINED,
 		SDL_WINDOWPOS_UNDEFINED,screen.width,screen.height,
 		SDL_WINDOW_SHOWN);
 	SDL_Surface *scr = SDL_GetWindowSurface(win);

@@ -621,7 +621,7 @@ void savemodel( int32_t namelen, char *name, int islodmesh, int version )
 		mesh.boundingsphere.position.y,
 		mesh.boundingsphere.position.z,
 		mesh.boundingsphere.w);
-	fprintf(f,"Verts_Jump: %lu\n",mesh.verts_jump-prev);
+	fprintf(f,"Verts_Jump: %zu\n",mesh.verts_jump-prev);
 	fprintf(f,"Verts_Count: %u\n",mesh.verts_count);
 	for ( uint32_t i=0; i<mesh.verts_count; i++ )
 	{
@@ -635,7 +635,7 @@ void savemodel( int32_t namelen, char *name, int islodmesh, int version )
 				unpackuvert(mesh.verts_ue1[i],2),
 				mesh.verts_ue1[i]);
 	}
-	fprintf(f,"Tris_Jump: %lu\n",mesh.tris_jump-prev);
+	fprintf(f,"Tris_Jump: %zu\n",mesh.tris_jump-prev);
 	fprintf(f,"Tris_Count: %u\n",mesh.tris_count);
 	for ( uint32_t i=0; i<mesh.tris_count; i++ )
 		fprintf(f," Tri[%u]: (Verts: (%hu, %hu, %hu),"
@@ -670,7 +670,7 @@ void savemodel( int32_t namelen, char *name, int islodmesh, int version )
 				mesh.animseqs[i].functions[j].time,l,pname);
 		}
 	}
-	fprintf(f,"Connects_Jump: %lu\n",mesh.connects_jump-prev);
+	fprintf(f,"Connects_Jump: %zu\n",mesh.connects_jump-prev);
 	fprintf(f,"Connects_Count: %u\n",mesh.connects_count);
 	for ( uint32_t i=0; i<mesh.connects_count; i++ )
 		fprintf(f," Connects[%u]: (NumVertTriangles: %u,"
@@ -688,7 +688,7 @@ void savemodel( int32_t namelen, char *name, int islodmesh, int version )
 		mesh.boundingsphere2.position.y,
 		mesh.boundingsphere2.position.z,
 		mesh.boundingsphere2.w);
-	fprintf(f,"VertLinks_Jump: %lu\n",mesh.vertlinks_jump-prev);
+	fprintf(f,"VertLinks_Jump: %zu\n",mesh.vertlinks_jump-prev);
 	fprintf(f,"VertLinks_Count: %u\n",mesh.vertlinks_count);
 	for ( uint32_t i=0; i<mesh.vertlinks_count; i++ )
 		fprintf(f," VertLinks[%u]: %u\n",i,mesh.vertlinks[i]);
@@ -964,7 +964,11 @@ finish:
 
 int main( int argc, char **argv )
 {
-	if ( argc < 2 ) return 1;
+	if ( argc < 2 )
+	{
+		printf("Usage: umodelextract <archive>\n");
+		return 1;
+	}
 	int fd = open(argv[1],O_RDONLY);
 	if ( fd == -1 )
 	{

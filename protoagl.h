@@ -204,9 +204,75 @@ void cross( vect_t *o, vect_t a, vect_t b )
 	_mm_store_ps((float*)o,to);
 }
 #else
-
-// TODO
-
+void vadd( vect_t *o, vect_t a, vect_t b )
+{
+	o->x = a.x+b.x;
+	o->y = a.y+b.y;
+	o->z = a.z+b.z;
+	o->w = a.w+b.w;
+}
+void vsub( vect_t *o, vect_t a, vect_t b )
+{
+	o->x = a.x-b.x;
+	o->y = a.y-b.y;
+	o->z = a.z-b.z;
+	o->w = a.w-b.w;
+}
+void vmul( vect_t *o, vect_t a, vect_t b )
+{
+	o->x = a.x*b.x;
+	o->y = a.y*b.y;
+	o->z = a.z*b.z;
+	o->w = a.w*b.w;
+}
+void vdiv( vect_t *o, vect_t a, vect_t b )
+{
+	o->x = a.x/b.x;
+	o->y = a.y/b.y;
+	o->z = a.z/b.z;
+	o->w = a.w/b.w;
+}
+void vscale( vect_t *o, vect_t a, float b )
+{
+	o->x = a.x*b;
+	o->y = a.y*b;
+	o->z = a.z*b;
+	o->w = a.w*b;
+}
+void vmat( vect_t *o, mat_t a, vect_t b )
+{
+	o->x = a.c[0][0]*b.x+a.c[1][0]*b.y+a.c[2][0]*b.z+a.c[3][0]*b.w;
+	o->y = a.c[0][1]*b.x+a.c[1][1]*b.y+a.c[2][1]*b.z+a.c[3][1]*b.w;
+	o->z = a.c[0][2]*b.x+a.c[1][2]*b.y+a.c[2][2]*b.z+a.c[3][2]*b.w;
+	o->w = a.c[0][3]*b.x+a.c[1][3]*b.y+a.c[2][3]*b.z+a.c[3][3]*b.w;
+}
+void mmul( mat_t *o, mat_t a, mat_t b )
+{
+	int i,j;
+	for ( i=0; i<4; i++ ) for ( j=0; j<4; j++ )
+		o->c[i][j] = a.c[i][0]*b.c[0][j]+a.c[i][1]*b.c[1][j]
+			+a.c[i][2]*b.c[2][j]+a.c[i][3]*b.c[3][j];
+}
+void mscale( mat_t *o, mat_t a, float b )
+{
+	int i,j;
+	for ( i=0; i<4; i++ ) for ( j=0; j<4; j++ )
+		o->c[i][j] = a.c[i][j]*b;
+}
+float dot( vect_t a, vect_t b )
+{
+	return a.x*b.x+a.y*b.y+a.z*b.z;
+}
+float vsize( vect_t v )
+{
+	return sqrt(powf(v.x,2.f)+powf(v.y,2.f)+powf(v.z,2.f));
+}
+void cross( vect_t *a, vect_t b, vect_t c )
+{
+	a->x = b.y*c.z-b.z*c.y;
+	a->y = b.z*c.x-b.x*c.z;
+	a->z = b.x*c.y-b.y*c.x;
+}
 #endif
 
 void vlerp( vect_t *o, vect_t a, vect_t b, float f )

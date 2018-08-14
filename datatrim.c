@@ -177,6 +177,7 @@ int main( int argc, char **argv )
 		free(dpoly);
 		return 8;
 	}
+	fclose(datafile);
 	if ( !(ndatafile = fopen(argv[2],"wb")) )
 	{
 		fprintf(stderr,"Couldn't open output: %s\n",strerror(errno));
@@ -202,7 +203,7 @@ int main( int argc, char **argv )
 		if ( discard(&dpoly[i],i) ) continue;
 		fwrite(&dpoly[i],sizeof(datapoly_t),1,ndatafile);
 	}
-	fclose(datafile);
+	fclose(ndatafile);
 	free(dpoly);
 	return 0;
 }

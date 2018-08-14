@@ -36,14 +36,16 @@ typedef struct
 #define DISCARD_OUTUV  2
 #define DISCARD_ISNUM  4
 #define DISCARD_NOTNUM 8
+#define DISCARD_ISPOLY 16
 int discardmode = 0;
 uint8_t discardminu = 0,
     discardmaxu = 0,
     discardminv = 0,
     discardmaxv = 0,
-    discardtexn = 0;
+    discardtexn = 0,
+    discardpoly = 0;
 
-int discard( datapoly_t *p )
+int discard( datapoly_t *p, int index )
 {
 	if ( discardmode&DISCARD_INUV )
 	{
@@ -71,6 +73,8 @@ int discard( datapoly_t *p )
 		return 1;
 	if ( discardmode&DISCARD_NOTNUM && (p->texnum != discardtexn) )
 		return 1;
+	if ( discardmode&DISCARD_ISPOLY && (index == discardpoly) )
+		return 1;
 	return 0;
 }
 
@@ -86,7 +90,8 @@ int main( int argc, char **argv )
 			" trim out triangles with tex coords outside specified"
 			" range\n - isnum n : trim out triangles with specified"
 			" texture number\n - notnum n : trim out triangles"
-			" without specified texture number\n");
+			" without specified texture number\n - ispoly n : trim"
+			" out a specific poly\n");
 		return 1;
 	}
 	for ( int i=3; i<argc; i++ )
@@ -106,7 +111,7 @@ int main( int argc, char **argv )
 		}
 		else if ( !strcmp(argv[i],"outuv") )
 		{
-			if ( argc < i+4 ) return 1;
+			if ( argc < i+4 )
 			{
 				fprintf(stderr,"outuv expects 4 parameters\n");
 				return 1;
@@ -119,7 +124,7 @@ int main( int argc, char **argv )
 		}
 		else if ( !strcmp(argv[i],"isnum") )
 		{
-			if ( argc < i+1 ) return 1;
+			if ( argc < i+1 )
 			{
 				fprintf(stderr,"isnum expects 1 parameter\n");
 				return 1;
@@ -129,13 +134,23 @@ int main( int argc, char **argv )
 		}
 		else if ( !strcmp(argv[i],"notnum") )
 		{
-			if ( argc < i+1 ) return 1;
+			if ( argc < i+1 )
 			{
 				fprintf(stderr,"notnum expects 1 parameter\n");
 				return 1;
 			}
 			discardmode |= DISCARD_NOTNUM;
 			sscanf(argv[++i],"%hhu",&discardtexn);
+		}
+		else if ( !strcmp(argv[i],"ispoly") )
+		{
+			if ( argc < i+1 )
+			{
+				fprintf(stderr,"ispoly expects 1 parameter\n");
+				return 1;
+			}
+			discardmode |= DISCARD_ISPOLY;
+			sscanf(argv[++i],"%hhu",&discardpoly);
 		}
 	}
 	if ( !(datafile = fopen(argv[1],"rb")) )
@@ -174,7 +189,7 @@ int main( int argc, char **argv )
 	// first pass, count discarded
 	for ( int i=0; i<dhead.numpolys; i++ )
 	{
-		if ( discard(&dpoly[i]) )
+		if ( discard(&dpoly[i],i) )
 		{
 			printf("discarded poly %d\n",i);
 			continue;
@@ -184,7 +199,7 @@ int main( int argc, char **argv )
 	fwrite(&ndhead,sizeof(dataheader_t),1,ndatafile);
 	for ( int i=0; i<dhead.numpolys; i++ )
 	{
-		if ( discard(&dpoly[i]) ) continue;
+		if ( discard(&dpoly[i],i) ) continue;
 		fwrite(&dpoly[i],sizeof(datapoly_t),1,ndatafile);
 	}
 	fclose(datafile);

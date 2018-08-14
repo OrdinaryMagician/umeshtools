@@ -120,6 +120,7 @@ int main( int argc, char **argv )
 		dhead.padding[11]);
 	int *used = calloc(sizeof(int),256);
 	int *refs = calloc(sizeof(int),dhead.numverts);
+	int *bad = calloc(sizeof(int),dhead.numpolys);
 	for ( int i=0; i<dhead.numpolys; i++ )
 	{
 		fread(&dpoly,1,sizeof(dpoly),datafile);
@@ -127,6 +128,7 @@ int main( int argc, char **argv )
 		{
 			free(used);
 			free(refs);
+			free(bad);
 			printf("Premature end of file reached at %lu\n",
 				ftell(datafile));
 			fclose(datafile);
@@ -143,9 +145,15 @@ int main( int argc, char **argv )
 			dpoly.uv[1][1],dpoly.uv[2][0],dpoly.uv[2][1],
 			dpoly.texnum,dpoly.flags);
 		used[dpoly.texnum]++;
-		refs[dpoly.vertices[0]]++;
-		refs[dpoly.vertices[1]]++;
-		refs[dpoly.vertices[2]]++;
+		for ( int j=0; j<3; j++ )
+		{
+			if ( dpoly.vertices[j] >= dhead.numverts )
+			{
+				printf(" !!! VERTEX %d OUT OF BOUNDS !!!\n",j);
+				bad[i]++;
+			}
+			else refs[dpoly.vertices[j]]++;
+		}
 	}
 	if ( !feof(datafile) )
 	{
@@ -158,10 +166,13 @@ int main( int argc, char **argv )
 	}
 	int ntex = 0;
 	int nvert = 0;
+	int nbad = 0;
 	for ( int i=0; i<256; i++ ) if ( used[i] ) ntex++;
 	for ( int i=0; i<dhead.numverts; i++ ) if ( refs[i] ) nvert++;
+	for ( int i=0; i<dhead.numpolys; i++ ) if ( bad[i] ) nbad++;
 	printf("MISC STATS\n textures referenced: %d\n vertices referenced: %d"
-		" (%d unreferenced)\n",ntex,nvert,dhead.numverts-nvert);
+		" (%d unreferenced)\n bad polys: %d\n",ntex,nvert,
+		dhead.numverts-nvert,nbad);
 	if ( nvert < dhead.numverts )
 	{
 		printf("UNREFERENCED VERTICES:\n");
@@ -169,8 +180,16 @@ int main( int argc, char **argv )
 			if ( !refs[i] ) printf(" %d",i);
 		printf("\n");
 	}
+	if ( nbad > 0 )
+	{
+		printf("BAD POLYS (VERTEX INDICES OUT OF BOUNDS):\n");
+		for ( int i=0; i<dhead.numpolys; i++ )
+			if ( bad[i] ) printf(" %d",i);
+		printf("\n");
+	}
 	free(used);
 	free(refs);
+	free(bad);
 	fclose(datafile);
 	if ( !(anivfile = fopen(argv[1],"rb")) )
 	{

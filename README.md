@@ -20,7 +20,8 @@ format.
 - **umeshview** : [TODO] Small SDL2 program for displaying models. Left click
   drag to rotate camera, right click drag to move, mouse wheel for zoom. Page
   up and page down switch between animation frames. Texture groups are color
-  coded, unreferenced vertices show as red crosses. Requires SDL2 (obviously).
+  coded, unreferenced vertices show as red crosses. Requires SDL2 (obviously),
+  OpenGL (also obviously), libepoxy and SDL2_image.
 - **umesh** : [TODO] The big boy, the visual mesh editor that I initially
   planned to make. Once this one is done, all the other tools will be obsolete.
 - **umodelextract** : A horrible abomination of C code that extracts meshes

@@ -71,7 +71,7 @@ int main( int argc, char **argv )
 	FILE *datafile, *anivfile;
 	if ( argc < 4 )
 	{
-		fprintf(stderr,"usage: umodelinfo <anivfile> <datafile>"
+		fprintf(stderr,"usage: umesh2obj <anivfile> <datafile>"
 			" <prefix>\n");
 		return 1;
 	}

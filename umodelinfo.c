@@ -226,10 +226,12 @@ int main( int argc, char **argv )
 		fclose(anivfile);
 		return 16;
 	}
-	int minx, miny, minz, maxx, maxy, maxz, midx, midy, midz, sizx,
-		sizy, sizz;
-	minx = miny = minz = INT_MAX;
-	maxx = maxy = maxz = INT_MIN;
+	int minx, miny, minz, maxx, maxy, maxz, midx, midy, midz, sizx, sizy,
+		sizz;
+	int tminx, tminy, tminz, tmaxx, tmaxy, tmaxz, tmidx, tmidy, tmidz,
+		tsizx, tsizy, tsizz;
+	tminx = tminy = tminz = minx = miny = minz = INT_MAX;
+	tmaxx = tmaxy = tmaxz = maxx = maxy = maxz = INT_MIN;
 	for ( int i=0; i<ahead.numframes; i++ )
 	{
 		printf("FRAME %d\n",i);
@@ -276,7 +278,34 @@ int main( int argc, char **argv )
 					maxz = unpackuvert(avert,2);
 			}
 		}
+		midx = (minx+maxx)/2;
+		midy = (miny+maxy)/2;
+		midz = (minz+maxz)/2;
+		sizx = maxx-minx;
+		sizy = maxy-miny;
+		sizz = maxz-minz;
+		printf(" FRAME STATS\n  minimum bounds: X %d Y %d Z %d\n"
+			"  maximum bounds: X %d Y %d Z %d\n  estimated center:"
+			" X %d Y %d Z %d\n  total size: X %d Y %d Z %d\n",minx,
+			miny,minz,maxx,maxy,maxz,midx,midy,midz,sizx,sizy,
+			sizz);
+		if ( minx < tminx ) tminx = minx;
+		if ( miny < tminy ) tminy = miny;
+		if ( minz < tminz ) tminz = minz;
+		if ( maxx > tmaxx ) tmaxx = maxx;
+		if ( maxy > tmaxy ) tmaxy = maxy;
+		if ( maxz > tmaxz ) tmaxz = maxz;
 	}
+	tmidx = (tminx+tmaxx)/2;
+	tmidy = (tminy+tmaxy)/2;
+	tmidz = (tminz+tmaxz)/2;
+	tsizx = tmaxx-tminx;
+	tsizy = tmaxy-tminy;
+	tsizz = tmaxz-tminz;
+	printf("TOTAL STATS\n minimum bounds: X %d Y %d Z %d\n"
+		" maximum bounds: X %d Y %d Z %d\n estimated center:"
+		" X %d Y %d Z %d\n total size: X %d Y %d Z %d\n",tminx,tminy,
+		tminz,tmaxx,tmaxy,tmaxz,tmidx,tmidy,tmidz,tsizx,tsizy,tsizz);
 	if ( !feof(anivfile) )
 	{
 		long pos = ftell(anivfile);
@@ -286,16 +315,6 @@ int main( int argc, char **argv )
 			printf("Unused data detected at %ld: %ld bytes\n",
 				pos,end-pos);
 	}
-	midx = (minx+maxx)/2;
-	midy = (miny+maxy)/2;
-	midz = (minz+maxz)/2;
-	sizx = maxx-minx;
-	sizy = maxy-miny;
-	sizz = maxz-minz;
-	printf("MISC STATS\n minimum bounds: X %d Y %d Z %d\n"
-		" maximum bounds: X %d Y %d Z %d\n estimated center:"
-		" X %d Y %d Z %d\n total size: X %d Y %d Z %d\n",minx,miny,
-		minz,maxx,maxy,maxz,midx,midy,midz,sizx,sizy,sizz);
 	fclose(anivfile);
 	return 0;
 }

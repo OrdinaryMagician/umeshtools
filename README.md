@@ -41,3 +41,7 @@ format.
   up with its own indices. Included for backwards compatibility with stuff that
   expects this sort of nonsense.
 - **umesh2obj** : Creates .obj files for each frame of a mesh.
+- **attacher** : [TODO] Attaches one mesh to the weapon triangle of another.
+- **polyflip** : Flips a specified set of polys in one datafile (by swapping
+  vertices 1 and 2 in them). Can be used to fix silly mistakes that go
+  unnoticed if, for example, the mesh is edited without backface culling on.

@@ -28,17 +28,12 @@ typedef struct
 
 uint16_t *polylist = 0;
 int npolys = 0;
+uint8_t typeset = 0, unset = 0;
 
-void flip_poly( datapoly_t *p )
+void set_flag( datapoly_t *p )
 {
-	uint16_t tmpvert = p->vertices[1];
-	uint8_t tmpuv[2] = { p->uv[1][0], p->uv[1][1] };
-	p->vertices[1] = p->vertices[2];
-	p->uv[1][0] = p->uv[2][0];
-	p->uv[1][1] = p->uv[2][1];
-	p->vertices[2] = tmpvert;
-	p->uv[2][0] = tmpuv[0];
-	p->uv[2][1] = tmpuv[1];
+	if ( unset ) p->type &= ~typeset;
+	else p->type |= typeset;
 }
 
 int main( int argc, char **argv )
@@ -46,11 +41,18 @@ int main( int argc, char **argv )
 	FILE *datafile, *ndatafile;
 	if ( argc < 4 )
 	{
-		fprintf(stderr,"usage: polyflip <infile> <outfile>"
-			" <index[-index]> [index[-index] [...]]\n");
+		fprintf(stderr,"usage: setumeshflag <infile> <outfile>"
+			"[-]<type> <index[-index]> [index[-index] [...]]\n");
 		return 1;
 	}
-	for ( int i=3; i<argc; i++ )
+	if ( argv[3][0] == '-' )
+	{
+		unset = 1;
+		argv[3]++;
+	}
+	sscanf(argv[3],"%hhx",&typeset);
+	// obtain lists
+	for ( int i=4; i<argc; i++ )
 	{
 		// check for "all" wildcard
 		if ( !strcmp(argv[i],"all") )
@@ -107,16 +109,16 @@ int main( int argc, char **argv )
 	{
 		for ( int i=0; i<dhead.numpolys; i++ )
 		{
-			printf("Flipping poly %d\n",i);
-			flip_poly(&dpoly[i]);
+			printf("Processing poly %d\n",i);
+			set_flag(&dpoly[i]);
 		}
 	}
 	else
 	{
 		for ( int i=0; i<npolys; i++ )
 		{
-			printf("Flipping poly %d\n",polylist[i]);
-			flip_poly(&dpoly[polylist[i]]);
+			printf("Processing poly %d\n",polylist[i]);
+			set_flag(&dpoly[polylist[i]]);
 		}
 	}
 	if ( !(ndatafile = fopen(argv[2],"wb")) )

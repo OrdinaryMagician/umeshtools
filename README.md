@@ -45,3 +45,6 @@ format.
 - **polyflip** : Flips a specified set of polys in one datafile (by swapping
   vertices 1 and 2 in them). Can be used to fix silly mistakes that go
   unnoticed if, for example, the mesh is edited without backface culling on.
+- **polysort** : Rearranges polys in a datafile for optimal loading and
+  drawing. Can help fix transparency ordering issues in gzdoom.
+- **setumeshflag** : Sets/unsets poly type data (render styles, hints, etc.).

@@ -896,6 +896,36 @@ finish:
 		.numframes = mesh.animframes,
 		.framesize = isdeusex?(8*mesh.frameverts):(4*mesh.frameverts),
 	};
+	// rearrange vertices if a RemapAnimVerts array exists
+	if ( islodmesh && (lodmesh.remapanimverts_count > 0) )
+	{
+		if ( isdeusex )
+		{
+			vert_dx_t *rmap = calloc(mesh.verts_count,8);
+			for ( uint16_t i=0; i<mesh.animframes; i++ )
+			for ( uint16_t j=0; j<mesh.frameverts; j++ )
+			{
+				rmap[j+i*mesh.frameverts] = mesh
+					.verts_dx[lodmesh.remapanimverts[j]+i
+					*mesh.frameverts];
+			}
+			free(mesh.verts_dx);
+			mesh.verts_dx = rmap;
+		}
+		else
+		{
+			uint32_t *rmap = calloc(mesh.verts_count,4);
+			for ( uint16_t i=0; i<mesh.animframes; i++ )
+			for ( uint16_t j=0; j<mesh.frameverts; j++ )
+			{
+				rmap[j+i*mesh.frameverts] = mesh
+					.verts_ue1[lodmesh.remapanimverts[j]+i
+					*mesh.frameverts];
+			}
+			free(mesh.verts_ue1);
+			mesh.verts_ue1 = rmap;
+		}
+	}
 	printf(" Exporting anivfile %s (%hu frames of size %hu)\n",fname,
 		ahead.numframes,ahead.framesize);
 	fwrite(&ahead,sizeof(aniheader_t),1,f);

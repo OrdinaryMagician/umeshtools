@@ -13,8 +13,8 @@
 #define M_PI (3.14159265358979323846)
 #endif
 
-#define SCR_FOV    90.f
-#define SCR_ZNEAR  0.001f
+#define SCR_FOV    45.f
+#define SCR_ZNEAR  0.01f
 #define SCR_ZFAR   1000.f
 #define SCR_WIDTH  640
 #define SCR_HEIGHT 480
@@ -62,18 +62,82 @@ int16_t unpackuvert( uint32_t v, int c )
 }
 
 const char *vsrc =
-"";
+"#version 430\n"
+"\n"
+"layout(location=0) in vec3 vPosition;\n"
+"layout(location=1) in vec3 vNormal;\n"
+"layout(location=2) in vec2 vCoord;\n"
+"layout(location=3) in vec3 vPosition2;\n"
+"layout(location=4) in vec3 vNormal2;\n"
+"\n"
+"out vec3 fNormal;\n"
+"out vec2 fCoord;\n"
+"\n"
+"uniform mat4 MVP;\n"
+"uniform mat4 MV;\n"
+"uniform float Interpolation;\n"
+"uniform bool MeshEnviroMap;\n"
+"\n"
+"void main()\n"
+"{\n"
+"\tgl_Position.xyz = (1.0-Interpolation)*vPosition+Interpolation*vPosition2;\n"
+"\tgl_Position.w = 1.0;\n"
+"\tgl_Position = MVP*gl_Position;\n"
+"\tfNormal = (1.0-Interpolation)*vNormal+Interpolation*vNormal2;\n"
+"\tif ( MeshEnviroMap )\n"
+"\t\tfCoord = fNormal.xz*0.5;\n"
+"\t\telse\n"
+"\tfCoord = vCoord;\n"
+"\tfNormal = (MV*vec4(fNormal,0.0)).xyz;\n"
+"}\n";
 const char *fsrc =
-"";
-const char *ugsrc =
-"";
+"#version 430\n"
+"\n"
+"in vec3 fNormal;\n"
+"in vec2 fCoord;\n"
+"\n"
+"layout(location=0) out vec4 FragColor;\n"
+"layout(binding=0) uniform sampler2D Texture;\n"
+"uniform bool Masked;\n"
+"uniform bool Unlit;\n"
+"\n"
+"void main()\n"
+"{\n"
+"\tvec4 res = texture2D(Texture,fCoord);\n"
+"\tif ( Masked && (res.a < 0.5) ) discard;\n"
+"\tfloat ref = max(0.1,dot(fNormal,normalize(vec3(-0.5,0.5,1.0))));\n"
+"\tif ( !Unlit ) res.rgb *= ref;\n"
+"\tFragColor = res;\n"
+"}\n";
 const char *uvsrc =
-"";
+"#version 430\n"
+"\n"
+"layout(location=0) in vec3 vPosition;\n"
+"layout(location=1) in vec3 vPosition2;\n"
+"\n"
+"uniform mat4 MVP;\n"
+"uniform float Interpolation;\n"
+"\n"
+"void main()\n"
+"{\n"
+"\tgl_Position.xyz = (1.0-Interpolation)*vPosition+Interpolation*vPosition2;\n"
+"\tgl_Position.w = 1.0;\n"
+"\tgl_Position = MVP*gl_Position;\n"
+"}\n";
 const char *ufsrc =
-"";
+"#version 430\n"
+"\n"
+"layout(location=0) out vec4 FragColor;\n"
+"\n"
+"void main()\n"
+"{\n"
+"\tFragColor = vec4(1.0,0.0,0.0,1.0);\n"
+"}\n";
 
-GLint mvbuf, mprog, uprog, mubuf;
-GLint *gltex;
+GLint mprog, uprog;
+GLuint vao, vbuf, ubuf;
+GLuint tex[9] = {0};
+GLuint vmid, vmid2, viid, vtid, umid, uiid, venvid, vmskid, vunlid;
 
 typedef struct
 {
@@ -86,6 +150,7 @@ typedef struct
 typedef struct
 {
 	int v[3];
+	vect_t n;
 	float uv[3][2];
 	int type, texn;
 } tri_t;
@@ -95,6 +160,14 @@ typedef struct
 	int ntri;
 	int type, texn;
 } group_t;
+typedef struct
+{
+	float p[3], n[3], c[2];
+} vboe_t;
+typedef struct
+{
+	float p[3];
+} uvboe_t;
 
 vect_t *verts;
 vect_t *norms;
@@ -107,7 +180,7 @@ int nframe;
 
 int *uverts, nuverts;	// unreferenced vertices
 
-// vector / matrix math helpers, taken from proto-alicegl
+// vector math helpers, taken from proto-alicegl
 void vadd( vect_t *o, vect_t a, vect_t b )
 {
 	o->x = a.x+b.x;
@@ -139,26 +212,27 @@ float vsize( vect_t v )
 void normalize( vect_t *a )
 {
 	float s = vsize(*a);
-	vscale(a,*a,s);
+	if ( s < 1.f/65536.f ) s = 1.f/65536.f;
+	vscale(a,*a,1.f/s);
 }
 void frustum( mat_t *o, float left, float right, float bottom, float top,
 	float near, float far )
 {
 	o->c[0][0] = (2.f*near)/(right-left);
-	o->c[0][1] = 0.f;
-	o->c[0][2] = (right+left)/(right-left);
-	o->c[0][3] = 0.f;
 	o->c[1][0] = 0.f;
-	o->c[1][1] = (2.f*near)/(top-bottom);
-	o->c[1][2] = (top+bottom)/(top-bottom);
-	o->c[1][3] = 0.f;
-	o->c[2][0] = 0.f;
-	o->c[2][1] = 0.f;
-	o->c[2][2] = (far+near)/(far-near);
-	o->c[2][3] = -(2.f*far*near)/(far-near);
+	o->c[2][0] = (right+left)/(right-left);
 	o->c[3][0] = 0.f;
+	o->c[0][1] = 0.f;
+	o->c[1][1] = (2.f*near)/(top-bottom);
+	o->c[2][1] = (top+bottom)/(top-bottom);
 	o->c[3][1] = 0.f;
-	o->c[3][2] = 1.f;
+	o->c[0][2] = 0.f;
+	o->c[1][2] = 0.f;
+	o->c[2][2] = -(far+near)/(far-near);
+	o->c[3][2] = -(2.f*far*near)/(far-near);
+	o->c[0][3] = 0.f;
+	o->c[1][3] = 0.f;
+	o->c[2][3] = -1.f;
 	o->c[3][3] = 0.f;
 }
 #define ROT_X 0
@@ -175,20 +249,20 @@ void rotate( mat_t *o, float angle, int axis )
 	float c = cosf(theta);
 	float oc = 1.f-c;
 	o->c[0][0] = oc*n.x*n.x+c;
-	o->c[0][1] = oc*n.x*n.y-n.z*s;
-	o->c[0][2] = oc*n.z*n.x+n.y*s;
-	o->c[0][3] = 0.f;
-	o->c[1][0] = oc*n.x*n.y+n.z*s;
-	o->c[1][1] = oc*n.y*n.y+c;
-	o->c[1][2] = oc*n.y*n.z-n.x*s;
-	o->c[1][3] = 0.f;
-	o->c[2][0] = oc*n.z*n.x-n.y*s;
-	o->c[2][1] = oc*n.y*n.z+n.x*s;
-	o->c[2][2] = oc*n.z*n.z+c;
-	o->c[2][3] = 0.f;
+	o->c[1][0] = oc*n.x*n.y-n.z*s;
+	o->c[2][0] = oc*n.z*n.x+n.y*s;
 	o->c[3][0] = 0.f;
+	o->c[0][1] = oc*n.x*n.y+n.z*s;
+	o->c[1][1] = oc*n.y*n.y+c;
+	o->c[2][1] = oc*n.y*n.z-n.x*s;
 	o->c[3][1] = 0.f;
+	o->c[0][2] = oc*n.z*n.x-n.y*s;
+	o->c[1][2] = oc*n.y*n.z+n.x*s;
+	o->c[2][2] = oc*n.z*n.z+c;
 	o->c[3][2] = 0.f;
+	o->c[0][3] = 0.f;
+	o->c[1][3] = 0.f;
+	o->c[2][3] = 0.f;
 	o->c[3][3] = 1.f;
 }
 void mmul( mat_t *o, mat_t a, mat_t b )
@@ -199,38 +273,158 @@ void mmul( mat_t *o, mat_t a, mat_t b )
 			+a.c[i][2]*b.c[2][j]+a.c[i][3]*b.c[3][j];
 }
 
-// model matrix, just identity, no transforms needed
-mat_t modelm =
-{
-	{{1,0,0,0},
-	{0,1,0,0},
-	{0,0,1,0},
-	{0,0,0,1}},
-};
-// view matrix, currently set 5 units back from origin
-mat_t viewm =
-{
-	{{1,0,0,0},
-	{0,1,0,0},
-	{0,0,1,0},
-	{0,0,-5,1}},
-};
-// perspective matrix, set up in main()
-mat_t projm;
+float rotation[3] = {0.f,0.f,0.f};
+float position[3] = {0.f,0.f,-128.f};
+mat_t persp;
 
-float animframe = 0.f;
+float animframe = 0.f, animrate = 30.f;
+int framesize = 0;
 
 void prepare_vbuf( void )
 {
-}
-
-void update_vbuf( void )
-{
+	// we actually need to define and bind a VAO otherwise it doesn't work
+	glGenVertexArrays(1,&vao);
+	glBindVertexArray(vao);
+	// generate the vbo data for mesh
+	vboe_t *vboe = malloc(0);
+	size_t nvboe = 0;
+	for ( int i=0; i<nframe; i++ )
+	{
+		for ( int j=0; j<ngroup; j++ ) for ( int k=0; k<groups[j].ntri; k++ )
+		{
+			for ( int l=0; l<3; l++ )
+			{
+				vboe = realloc(vboe,(nvboe+1)*sizeof(vboe_t));
+				vboe[nvboe].p[0] = verts[groups[j].tris[k].v[l]+i*nvert].x;
+				vboe[nvboe].p[1] = verts[groups[j].tris[k].v[l]+i*nvert].y;
+				vboe[nvboe].p[2] = verts[groups[j].tris[k].v[l]+i*nvert].z;
+				vboe[nvboe].n[0] = norms[groups[j].tris[k].v[l]+i*nvert].x;
+				vboe[nvboe].n[1] = norms[groups[j].tris[k].v[l]+i*nvert].y;
+				vboe[nvboe].n[2] = norms[groups[j].tris[k].v[l]+i*nvert].z;
+				vboe[nvboe].c[0] = groups[j].tris[k].uv[l][0];
+				vboe[nvboe].c[1] = groups[j].tris[k].uv[l][1];
+				nvboe++;
+			}
+		}
+	}
+	glGenBuffers(1,&vbuf);
+	glBindBuffer(GL_ARRAY_BUFFER,vbuf);
+	glBufferData(GL_ARRAY_BUFFER,sizeof(vboe_t)*nvboe,&vboe[0],GL_STATIC_DRAW);
+	free(vboe);
+	// generate the vbo data for scattered verts
+	uvboe_t *uvboe = malloc(0);
+	nvboe = 0;
+	for ( int i=0; i<nframe; i++ )
+	{
+		for ( int j=0; j<nuverts; j++ )
+		{
+			uvboe = realloc(uvboe,(nvboe+1)*sizeof(uvboe_t));
+			uvboe[nvboe].p[0] = verts[uverts[j]+i*nvert].x;
+			uvboe[nvboe].p[1] = verts[uverts[j]+i*nvert].y;
+			uvboe[nvboe].p[2] = verts[uverts[j]+i*nvert].z;
+			nvboe++;
+		}
+	}
+	glGenBuffers(1,&ubuf);
+	glBindBuffer(GL_ARRAY_BUFFER,ubuf);
+	glBufferData(GL_ARRAY_BUFFER,sizeof(uvboe_t)*nvboe,&uvboe[0],GL_STATIC_DRAW);
 }
 
 void rendermesh( void )
 {
-
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	glUseProgram(mprog);
+	// prepare MVP matrix
+	mat_t mvp =
+	{
+		{{1,0,0,0},
+		{0,1,0,0},
+		{0,0,1,0},
+		{0,0,0,1}},
+	};
+	mat_t rotx, roty, rotz;
+	rotate(&rotx,rotation[0],ROT_X);
+	rotate(&roty,rotation[1],ROT_Y);
+	rotate(&rotz,rotation[2],ROT_Z);
+	mmul(&mvp,mvp,rotz);
+	mmul(&mvp,mvp,roty);
+	mmul(&mvp,mvp,rotx);
+	mvp.c[3][0] += position[0];
+	mvp.c[3][1] += position[1];
+	mvp.c[3][2] += position[2];
+	glUniformMatrix4fv(vmid2,1,GL_FALSE,&mvp.c[0][0]);
+	mmul(&mvp,mvp,persp);
+	glUniformMatrix4fv(vmid,1,GL_FALSE,&mvp.c[0][0]);
+	int framea = floorf(animframe);
+	glUniform1f(viid,animframe-framea);
+	int frameb = ceilf(animframe);
+	if ( frameb >= nframe ) frameb = 0;
+	glBindBuffer(GL_ARRAY_BUFFER,vbuf);
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glEnableVertexAttribArray(2);
+	glEnableVertexAttribArray(3);
+	glEnableVertexAttribArray(4);
+	glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(vboe_t),(char*)(framea*framesize*sizeof(vboe_t)));
+	glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,sizeof(vboe_t),(char*)(framea*framesize*sizeof(vboe_t)+12));
+	glVertexAttribPointer(2,2,GL_FLOAT,GL_FALSE,sizeof(vboe_t),(char*)(framea*framesize*sizeof(vboe_t)+24));
+	glVertexAttribPointer(3,3,GL_FLOAT,GL_FALSE,sizeof(vboe_t),(char*)(frameb*framesize*sizeof(vboe_t)));
+	glVertexAttribPointer(4,3,GL_FLOAT,GL_FALSE,sizeof(vboe_t),(char*)(frameb*framesize*sizeof(vboe_t)+12));
+	int vofs = 0;
+	for ( int i=0; i<ngroup; i++ )
+	{
+		if ( groups[i].type&8 )
+		{
+			// skip drawing weapon triangle
+			vofs += groups[i].ntri*3;
+			continue;
+		}
+		glBindTexture(GL_TEXTURE_2D,tex[groups[i].texn]);
+		glActiveTexture(GL_TEXTURE0);
+		if ( (groups[i].type&7) ) glDisable(GL_CULL_FACE);
+		else glEnable(GL_CULL_FACE);
+		glUniform1i(venvid,groups[i].type&0x40);
+		glUniform1i(vunlid,groups[i].type&0x10);
+		glUniform1i(vmskid,(groups[i].type&7)==3);
+		// set blend mode when needed
+		switch( groups[i].type&7 )
+		{
+		case 2:
+			// additive
+			glBlendFunc(GL_ONE,GL_ONE);
+			glDepthMask(GL_FALSE);
+			break;
+// not properly implemented
+//		case 4:
+//			// modulated
+//			glBlendFunc(GL_DST_COLOR,GL_ZERO);
+//			glDepthMask(GL_FALSE);
+//			break;
+		default:
+			glBlendFunc(GL_ONE,GL_ZERO);
+			glDepthMask(GL_TRUE);
+			break;
+		}
+		glDrawArrays(GL_TRIANGLES,vofs,groups[i].ntri*3);
+		vofs += groups[i].ntri*3;
+	}
+	glDisable(GL_DEPTH_TEST);
+	glBlendFunc(GL_ONE,GL_ZERO);
+	glDepthMask(GL_FALSE);
+	glUseProgram(uprog);
+	glUniformMatrix4fv(umid,1,GL_FALSE,&mvp.c[0][0]);
+	glUniform1f(uiid,animframe-framea);
+	glBindBuffer(GL_ARRAY_BUFFER,ubuf);
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glDisableVertexAttribArray(2);
+	glDisableVertexAttribArray(3);
+	glDisableVertexAttribArray(4);
+	glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(uvboe_t),(char*)(framea*nuverts*sizeof(uvboe_t)));
+	glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,sizeof(uvboe_t),(char*)(frameb*nuverts*sizeof(uvboe_t)));
+	glDrawArrays(GL_POINTS,0,nuverts);
 }
 
 #define NANOS_SEC 1000000000L
@@ -282,6 +476,69 @@ GLint link_shader( GLint geom, GLint vert, GLint frag )
 		return -1;
 	}
 	return hnd;
+}
+
+typedef struct
+{
+	float ofsX, ofsY, ofsZ;
+	int unmirror;
+	int8_t pitch, yaw, roll;
+	float scaleX, scaleY, scaleZ;
+} transform_t;
+transform_t tform =
+{
+	0.f, 0.f, 0.f,
+	0,
+	0, 64, 0,
+	.05f, .05f, 0.1f
+};
+
+void transform( vect_t *v, transform_t *t )
+{
+	float pitch = (t->pitch/256.f)*2.f*acosf(-1.f),
+		yaw = (t->yaw/256.f)*2.f*acosf(-1.f),
+		roll = (t->roll/256.f)*2.f*acosf(-1.f);
+	float s, c;
+	vect_t v1, v2, v3, v4;
+	// translation
+	if ( t->unmirror )
+	{
+		roll *= -1;
+		v->x *= -1.f;
+		v->x += t->ofsX;
+	}
+	else v->x -= t->ofsX;
+	v->y -= t->ofsY;
+	v->z -= t->ofsZ;
+	// scale
+	v->x *= t->scaleX;
+	v->y *= t->scaleY;
+	v->z *= t->scaleZ;
+	// rotation
+	v1.x = v->x;
+	v1.y = v->y;
+	v1.z = v->z;
+	// roll (x)
+	s = sinf(roll);
+	c = cosf(roll);
+	v2.x = v1.x;
+	v2.y = v1.y*c-v1.z*s;
+	v2.z = v1.y*s+v1.z*c;
+	// pitch (y)
+	s = sinf(pitch);
+	c = cosf(pitch);
+	v3.x = v2.x*c+v2.z*s;
+	v3.y = v2.y;
+	v3.z = -v2.x*s+v2.z*c;
+	// yaw (z)
+	s = sinf(yaw);
+	c = cosf(yaw);
+	v4.x = v3.x*c-v3.y*s;
+	v4.y = v3.x*s+v3.y*c;
+	v4.z = v3.z;
+	v->x = v4.y;
+	v->y = v4.z;
+	v->z = v4.x;
 }
 
 // compare groups by render style
@@ -339,15 +596,30 @@ int mesh_load( const char *aniv, const char *data )
 		refs[dpoly.vertices[0]]++;
 		refs[dpoly.vertices[1]]++;
 		refs[dpoly.vertices[2]]++;
-		tris[i].v[0] = dpoly.vertices[0];
-		tris[i].v[1] = dpoly.vertices[1];
-		tris[i].v[2] = dpoly.vertices[2];
-		tris[i].uv[0][0] = dpoly.uv[0][0]/255.f;
-		tris[i].uv[0][1] = dpoly.uv[0][1]/255.f;
-		tris[i].uv[1][0] = dpoly.uv[1][0]/255.f;
-		tris[i].uv[1][1] = dpoly.uv[1][1]/255.f;
-		tris[i].uv[2][0] = dpoly.uv[2][0]/255.f;
-		tris[i].uv[2][1] = dpoly.uv[2][1]/255.f;
+		if ( tform.unmirror )
+		{
+			tris[i].v[0] = dpoly.vertices[0];
+			tris[i].v[1] = dpoly.vertices[2];
+			tris[i].v[2] = dpoly.vertices[1];
+			tris[i].uv[0][0] = dpoly.uv[0][0]/255.f;
+			tris[i].uv[0][1] = dpoly.uv[0][1]/255.f;
+			tris[i].uv[1][0] = dpoly.uv[2][0]/255.f;
+			tris[i].uv[1][1] = dpoly.uv[2][1]/255.f;
+			tris[i].uv[2][0] = dpoly.uv[1][0]/255.f;
+			tris[i].uv[2][1] = dpoly.uv[1][1]/255.f;
+		}
+		else
+		{
+			tris[i].v[0] = dpoly.vertices[0];
+			tris[i].v[1] = dpoly.vertices[1];
+			tris[i].v[2] = dpoly.vertices[2];
+			tris[i].uv[0][0] = dpoly.uv[0][0]/255.f;
+			tris[i].uv[0][1] = dpoly.uv[0][1]/255.f;
+			tris[i].uv[1][0] = dpoly.uv[1][0]/255.f;
+			tris[i].uv[1][1] = dpoly.uv[1][1]/255.f;
+			tris[i].uv[2][0] = dpoly.uv[2][0]/255.f;
+			tris[i].uv[2][1] = dpoly.uv[2][1]/255.f;
+		}
 		int texn = dpoly.texnum;
 		int type = dpoly.type;
 group_recheck:
@@ -384,7 +656,7 @@ group_recheck:
 	for ( int i=0; i<dhead.numverts; i++ ) if ( !refs[i] ) nuverts++;
 	uverts = calloc(sizeof(int),nuverts);
 	int j = 0;
-	for ( int i=0; i<dhead.numverts; i++ ) if ( !refs[i] ) uverts[j] = i;
+	for ( int i=0; i<dhead.numverts; i++ ) if ( !refs[i] ) uverts[j++] = i;
 	free(refs);
 	fclose(datafile);
 	if ( !(anivfile = fopen(aniv,"rb")) )
@@ -419,15 +691,15 @@ group_recheck:
 		free(uverts);
 		for ( int i=0; i<ngroup; i++ ) free(groups[i].tris);
 		free(groups);
-		fprintf(stderr," (Unknown format)\nIncorrect frame size,"
+		fprintf(stderr,"Incorrect frame size %u,"
 			" should be %u or %u. Wrong anivfile?\n",
-			dhead.numverts*4,dhead.numverts*8);
+			ahead.framesize,dhead.numverts*4,dhead.numverts*8);
 		fclose(anivfile);
 		return 16;
 	}
 	for ( int i=0; i<ahead.numframes; i++ )
 	{
-		int fs = dhead.numverts*i;
+		int vs = dhead.numverts*i;
 		// load vertices
 		for ( int j=0; j<dhead.numverts; j++ )
 		{
@@ -449,18 +721,31 @@ group_recheck:
 			}
 			if ( usedx )
 			{
-				verts[j+fs].x = dxvert[0]/32768.f;
-				verts[j+fs].y = dxvert[1]/32768.f;
-				verts[j+fs].z = dxvert[2]/32768.f;
+				verts[j+vs].x = dxvert[0];
+				verts[j+vs].y = dxvert[1];
+				verts[j+vs].z = dxvert[2];
 			}
 			else
 			{
-				verts[j+fs].x = unpackuvert(avert,0)/32768.f;
-				verts[j+fs].y = unpackuvert(avert,1)/32768.f;
-				verts[j+fs].z = unpackuvert(avert,2)/32768.f;
+				verts[j+vs].x = unpackuvert(avert,0)/32.f;
+				verts[j+vs].y = unpackuvert(avert,1)/32.f;
+				verts[j+vs].z = unpackuvert(avert,2)/64.f;
 			}
+			transform(&verts[j+vs],&tform);
 		}
-		// compute normals
+		// compute facet normals
+		for ( int j=0; j<dhead.numpolys; j++ )
+		{
+			vect_t dir[2], norm;
+			vsub(&dir[0],verts[tris[j].v[1]+vs],
+				verts[tris[j].v[0]+vs]);
+			vsub(&dir[1],verts[tris[j].v[2]+vs],
+				verts[tris[j].v[0]+vs]);
+			cross(&norm,dir[0],dir[1]);
+			normalize(&norm);
+			tris[j].n = norm;
+		}
+		// compute vertex normals
 		for ( int j=0; j<dhead.numverts; j++ )
 		{
 			vect_t nsum = {0};
@@ -468,117 +753,237 @@ group_recheck:
 			for ( int k=0; k<dhead.numpolys; k++ )
 			{
 				if ( (tris[k].v[0] != j)
-					|| (tris[k].v[1] != j)
-					|| (tris[k].v[2] != j) )
+					&& (tris[k].v[1] != j)
+					&& (tris[k].v[2] != j) )
 					continue;
-				vect_t dir[2], norm;
-				vsub(&dir[0],verts[tris[k].v[1]+fs],
-					verts[tris[k].v[0]+fs]);
-				vsub(&dir[1],verts[tris[k].v[2]+fs],
-					verts[tris[k].v[0]+fs]);
-				cross(&norm,dir[0],dir[1]);
-				normalize(&norm);
-				vadd(&nsum,nsum,norm);
+				vadd(&nsum,nsum,tris[k].n);
 				t++;
 			}
-			if ( t ) vscale(&nsum,nsum,1.f/t);
-			norms[j] = nsum;
+			vscale(&nsum,nsum,1.f/t);
+			norms[j+vs] = nsum;
 		}
 	}
+	// calc frame size
+	for ( int i=0; i<ngroup; i++ ) framesize += groups[i].ntri*3;
 	return 0;
 }
+
+void tex_load( unsigned n, const char *filename )
+{
+	if ( n >= 9 ) return;
+	SDL_Surface *tx = IMG_Load(filename);
+	if ( !tx ) return;
+	// set first index to translucent
+	if ( tx->format->palette ) tx->format->palette->colors[0].a = 0;
+	SDL_Surface *txconv = SDL_ConvertSurfaceFormat(tx,SDL_PIXELFORMAT_RGBA32,0);
+	glGenTextures(1,&tex[n]);
+	glBindTexture(GL_TEXTURE_2D,tex[n]);
+	glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,txconv->w,txconv->h,0,GL_RGBA,GL_UNSIGNED_BYTE,txconv->pixels);
+	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+	SDL_FreeSurface(txconv);
+	SDL_FreeSurface(tx);
+}
+
+int inputs[21] = {0};
 
 int main( int argc, char **argv )
 {
 	if ( argc < 3 )
 	{
-		fprintf(stderr,"usage: umeshview <anivfile> <datafile>\n");
+		fprintf(stderr,"usage: umeshview <anivfile> <datafile>"
+			" [-f] [-p posX posY posZ] [-r pitch yaw roll] [-s scaleX scaleY scaleZ] [-t # <texture> ...]\n");
 		return 1;
 	}
-	int res = mesh_load(argv[1],argv[2]);
-	if ( !res ) return res;
 	SDL_Init(SDL_INIT_VIDEO|SDL_INIT_EVENTS);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,3);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,2);
+	IMG_Init(IMG_INIT_PNG);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,4);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3);
+	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES,4);
 	SDL_Window *win = SDL_CreateWindow("umeshview",SDL_WINDOWPOS_UNDEFINED,
 		SDL_WINDOWPOS_UNDEFINED,SCR_WIDTH,SCR_HEIGHT,
 		SDL_WINDOW_OPENGL|SDL_WINDOW_SHOWN);
 	SDL_GLContext *ctx = SDL_GL_CreateContext(win);
 	SDL_GL_SetSwapInterval(1);
+	float fh = tanf(SCR_FOV/360.f*M_PI)*SCR_ZNEAR,
+		fw = fh*(SCR_WIDTH/(float)SCR_HEIGHT);
+	frustum(&persp,-fw,fw,-fh,fh,SCR_ZNEAR,SCR_ZFAR);
+	if ( argc > 3 )
+	{
+		for ( int i=3; i<argc; i++ )
+		{
+			if ( !strcmp(argv[i],"-p") )
+			{
+				if ( argc < i+3 ) break;
+				sscanf(argv[++i],"%f",&tform.ofsX);
+				sscanf(argv[++i],"%f",&tform.ofsY);
+				sscanf(argv[++i],"%f",&tform.ofsZ);
+			}
+			else if ( !strcmp(argv[i],"-r") )
+			{
+				if ( argc < i+3 ) break;
+				sscanf(argv[++i],"%hhd",&tform.pitch);
+				sscanf(argv[++i],"%hhd",&tform.yaw);
+				sscanf(argv[++i],"%hhd",&tform.roll);
+			}
+			else if ( !strcmp(argv[i],"-s") )
+			{
+				if ( argc < i+3 ) break;
+				sscanf(argv[++i],"%f",&tform.scaleX);
+				sscanf(argv[++i],"%f",&tform.scaleY);
+				sscanf(argv[++i],"%f",&tform.scaleZ);
+			}
+			else if ( !strcmp(argv[i],"-f") )
+			{
+				tform.unmirror = 1;
+				continue;
+			}
+			else if ( !strcmp(argv[i],"-t") )
+			{
+				if ( argc < i+2  ) continue;
+				unsigned n = 0;
+				sscanf(argv[++i],"%u",&n);
+				tex_load(n,argv[++i]);
+			}
+		}
+	}
+	int res = mesh_load(argv[1],argv[2]);
+	if ( res ) return res;
+	for ( int i=0; i<9; i++ )
+	{
+		if ( tex[i] ) continue;
+		unsigned char gentex[4] = {rand()%256,rand()%256,rand()%256,255};
+		glGenTextures(1,&tex[i]);
+		glBindTexture(GL_TEXTURE_2D,tex[i]);
+		glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,1,1,0,GL_RGBA,GL_UNSIGNED_BYTE,&gentex);
+		glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+	}
 	/* compile model and unreferenced vertex shader programs */
-	GLint geom, vert, frag;
+	GLint vert, frag;
 	if ( (frag=compile_shader(GL_FRAGMENT_SHADER,fsrc)) == -1 ) return 32;
 	if ( (vert=compile_shader(GL_VERTEX_SHADER,vsrc)) == -1 ) return 32;
 	if ( (mprog=link_shader(-1,vert,frag)) == -1 ) return 32;
 	glDeleteShader(frag);
 	glDeleteShader(vert);
+	vmid = glGetUniformLocation(mprog,"MVP");
+	vmid2 = glGetUniformLocation(mprog,"MV");
+	viid = glGetUniformLocation(mprog,"Interpolation");
+	venvid = glGetUniformLocation(mprog,"MeshEnviroMap");
+	vmskid = glGetUniformLocation(mprog,"Masked");
+	vunlid = glGetUniformLocation(mprog,"Unlit");
 	if ( (frag=compile_shader(GL_FRAGMENT_SHADER,ufsrc)) == -1 ) return 32;
 	if ( (vert=compile_shader(GL_VERTEX_SHADER,uvsrc)) == -1 ) return 32;
-	if ( (geom=compile_shader(GL_FRAGMENT_SHADER,ugsrc)) == -1 ) return 32;
-	if ( (uprog=link_shader(geom,vert,frag)) == -1 ) return 32;
+	if ( (uprog=link_shader(-1,vert,frag)) == -1 ) return 32;
 	glDeleteShader(frag);
 	glDeleteShader(vert);
-	glDeleteShader(geom);
+	umid = glGetUniformLocation(uprog,"MVP");
+	uiid = glGetUniformLocation(uprog,"Interpolation");
+	glPointSize(4.f);
+	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_CULL_FACE);
+	glEnable(GL_BLEND);
+	glDepthFunc(GL_LEQUAL);
+	glCullFace(GL_BACK);
+	glClearColor(0.5f,0.5f,0.5f,1.f);
+	glClearDepth(1.f);
 	prepare_vbuf();
 	SDL_Event e;
 	int active = 1;
 	float frame = 0.f;
 	long tick, tock;
-	float fh = tanf(SCR_FOV/360.f*M_PI)*SCR_ZNEAR,
-		fw = fh*(SCR_WIDTH/(float)SCR_HEIGHT);
-	frustum(&projm,-fw,fw,-fh,fh,SCR_ZNEAR,SCR_ZFAR);
 	while ( active )
 	{
-		float rx = 0, ry = 0, rz = 0, mx = 0, my = 0, mz = 0;
 		while ( SDL_PollEvent(&e) )
 		{
 			if ( e.type == SDL_QUIT ) active = 0;
-			else if ( e.type == SDL_KEYDOWN )
+			else if ( (e.type == SDL_KEYDOWN) || (e.type == SDL_KEYUP) )
 			{
-				if ( e.key.keysym.sym == SDLK_a )
-					mx -= 1.f*frame;
-				else if ( e.key.keysym.sym == SDLK_d )
-					mx += 1.f*frame;
-				else if ( e.key.keysym.sym == SDLK_q )
-					my -= 1.f*frame;
-				else if ( e.key.keysym.sym == SDLK_e )
-					my += 1.f*frame;
-				else if ( e.key.keysym.sym == SDLK_w )
-					mz += 1.f*frame;
-				else if ( e.key.keysym.sym == SDLK_s )
-					mz -= 1.f*frame;
-				else if ( e.key.keysym.sym == SDLK_LEFT )
-					rx += 1.f*frame;
-				else if ( e.key.keysym.sym == SDLK_RIGHT )
-					rx -= 1.f*frame;
-				else if ( e.key.keysym.sym == SDLK_PAGEUP )
-					ry -= 1.f*frame;
-				else if ( e.key.keysym.sym == SDLK_PAGEDOWN )
-					ry += 1.f*frame;
-				else if ( e.key.keysym.sym == SDLK_UP )
-					rz -= 1.f*frame;
-				else if ( e.key.keysym.sym == SDLK_DOWN )
-					rz += 1.f*frame;
-				else if ( e.key.keysym.sym == SDLK_ESCAPE )
-					active = 0;
+				if ( e.key.keysym.sym == SDLK_a ) inputs[0] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_d ) inputs[1] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_q ) inputs[2] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_e ) inputs[3] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_w ) inputs[4] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_s ) inputs[5] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_LEFT ) inputs[6] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_RIGHT ) inputs[7] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_PAGEUP ) inputs[8] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_PAGEDOWN ) inputs[9] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_UP ) inputs[10] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_DOWN ) inputs[11] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_END ) inputs[12] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_HOME ) inputs[13] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_INSERT ) inputs[14] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_DELETE ) inputs[15] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_SPACE ) inputs[16] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_RETURN ) inputs[17] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_BACKSPACE ) inputs[18] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_ESCAPE ) inputs[19] = (e.type==SDL_KEYDOWN);
+				if ( e.key.keysym.mod&KMOD_LSHIFT ) inputs[20] = 1;
+				else inputs[20] = 0;
 			}
 		}
+		if ( inputs[0] ) position[0] += inputs[20]?.1f:1.f;
+		if ( inputs[1] ) position[0] -= inputs[20]?.1f:1.f;
+		if ( inputs[2] ) position[1] += inputs[20]?.1f:1.f;
+		if ( inputs[3] ) position[1] -= inputs[20]?.1f:1.f;
+		if ( inputs[4] ) position[2] += inputs[20]?.1f:1.f;
+		if ( inputs[5] ) position[2] -= inputs[20]?.1f:1.f;
+		if ( inputs[6] ) rotation[1] += inputs[20]?1.f:5.f;
+		if ( inputs[7] ) rotation[1] -= inputs[20]?1.f:5.f;
+		if ( inputs[8] ) rotation[2] += inputs[20]?1.f:5.f;
+		if ( inputs[9] ) rotation[2] -= inputs[20]?1.f:5.f;
+		if ( inputs[10] ) rotation[0] += inputs[20]?1.f:5.f;
+		if ( inputs[11] ) rotation[0] -= inputs[20]?1.f:5.f;
+		if ( inputs[12] )
+		{
+			inputs[12] = 0;
+			rotation[0] = 0.f;
+			rotation[1] = 0.f;
+			rotation[2] = 0.f;
+			position[0] = 0.f;
+			position[1] = 0.f;
+			position[2] = -128.f;
+		}
+		if ( inputs[13] )
+		{
+			inputs[13] = 0;
+			animframe = 0.f;
+			animrate = 30.f;
+		}
+		if ( inputs[14] ) animrate += 1.f;
+		if ( inputs[15] ) animrate = (animrate-1.f<1.f)?1.f:(animrate-1.f);
+		if ( inputs[16] )
+		{
+			inputs[16] = 0;
+			animrate *= -1.f;
+		}
+		if ( inputs[17] )
+		{
+			inputs[17] = 0;
+			animframe = floorf(animframe)+1.f;
+			if ( animframe >= nframe )
+				animframe = 0;
+		}
+		if ( inputs[18] )
+		{
+			inputs[18] = 0;
+			animframe = floorf(animframe)-1.f;
+			if ( animframe < 0 )
+				animframe = nframe-1;
+		}
+		if ( inputs[19]  )active = 0;
 		tick = ticker();
-		mat_t rotx, roty, rotz;
-		rotate(&rotx,rx,ROT_X);
-		rotate(&roty,ry,ROT_Y);
-		rotate(&rotz,rz,ROT_Z);
-		mmul(&viewm,viewm,rotx);
-		mmul(&viewm,viewm,roty);
-		mmul(&viewm,viewm,rotz);
-		viewm.c[3][0] += mx;
-		viewm.c[3][1] += my;
-		viewm.c[3][2] += mz;
 		rendermesh();
 		SDL_GL_SwapWindow(win);
 		tock = ticker();
 		frame = (float)(tock-tick)/NANOS_SEC;
-		printf("FPS: %.2f\n",1.f/frame);
+		printf("FPS: %g\tFrame: %g\tRate: %g"
+			"\tPos: %g, %g, %g\tRot: %g %g %g\n",
+			1.f/frame,animframe,animrate,position[0],position[1],
+			position[2],rotation[0],rotation[1],rotation[2]);
+		if ( animrate > 0.f ) animframe += frame*animrate;
+		if ( animframe >= nframe ) animframe = fmodf(animframe,nframe);
 	}
 	free(verts);
 	free(norms);
@@ -588,6 +993,7 @@ int main( int argc, char **argv )
 	free(uverts);
 	SDL_GL_DeleteContext(ctx);
 	SDL_DestroyWindow(win);
+	IMG_Quit();
 	SDL_Quit();
 	return 0;
 }

@@ -430,6 +430,40 @@ uint8_t typefromflags( uint32_t flags )
 	return out;
 }
 
+uint32_t flagsfromtype( uint8_t type )
+{
+	uint32_t out = 0;
+	if ( (type&7) == 4 ) out |= PF_MODULATED;
+	else if ( (type&7) == 3 ) out |= PF_MASKED;
+	else if ( (type&7) == 2 ) out |= PF_TRANSLUCENT;
+	else if ( (type&7) == 1 ) out |= PF_TWOSIDED;
+	if ( type&0x08 ) out |= PF_SPECIALPOLY;
+	if ( type&0x10 ) out |= PF_UNLIT;
+	if ( type&0x20 ) out |= PF_FLAT;
+	if ( type&0x40 ) out |= PF_ENVIRONMENT;
+	if ( type&0x08 ) out |= PF_NOSMOOTH;
+	return out;
+}
+
+// U1 beta packages actually use the same triangle format as the raw file
+// so it has to be converted
+void readbetatri( tri_t *out )
+{
+	datapoly_t dp;
+	READSTRUCT(dp,datapoly_t)
+	out->verts[0] = dp.vertices[0];
+	out->verts[1] = dp.vertices[1];
+	out->verts[2] = dp.vertices[2];
+	out->uv[0][0] = dp.uv[0][0];
+	out->uv[0][1] = dp.uv[0][1];
+	out->uv[1][0] = dp.uv[1][0];
+	out->uv[1][1] = dp.uv[1][1];
+	out->uv[2][0] = dp.uv[2][0];
+	out->uv[2][1] = dp.uv[2][1];
+	out->flags = flagsfromtype(dp.type);
+	out->texnum = dp.texnum;
+}
+
 // construct full name for object
 // shamelessly recycled from my old upackage project
 void imprefix( FILE *f, int32_t i );
@@ -480,6 +514,7 @@ void savemodel( int32_t namelen, char *name, int islodmesh, int version )
 	memset(&lodmesh,0,sizeof(lodmesh_t));
 	READSTRUCT(mesh.boundingbox,boundingbox_t)
 	if ( version > 61 ) READSTRUCT(mesh.boundingsphere,boundingsphere_t)
+	else if ( version < 40 ) fpos += 16;
 	else READSTRUCT(mesh.boundingsphere,boundingsphere_61pre_t)
 	if ( version > 61 ) mesh.verts_jump = readdword();
 	mesh.verts_count = readindex();
@@ -515,10 +550,17 @@ void savemodel( int32_t namelen, char *name, int islodmesh, int version )
 	fpos = mesh.verts_jump;
 	if ( version > 61 ) mesh.tris_jump = readdword();
 	mesh.tris_count = readindex();
-	if ( version <= 61 )
+	if ( version < 40 )
+		mesh.tris_jump = fpos+mesh.tris_count*sizeof(datapoly_t);
+	else if ( version <= 61 )
 		mesh.tris_jump = fpos+mesh.tris_count*sizeof(tri_t);
 	mesh.tris = calloc(mesh.tris_count,sizeof(tri_t));
-	memcpy(mesh.tris,pkgfile+fpos,mesh.tris_count*sizeof(tri_t));
+	if ( version < 40 )
+	{
+		for ( uint32_t i=0; i<mesh.tris_count; i++ )
+			readbetatri(&mesh.tris[i]);
+	}
+	else memcpy(mesh.tris,pkgfile+fpos,mesh.tris_count*sizeof(tri_t));
 	fpos = mesh.tris_jump;
 	mesh.animseqs_count = readindex();
 	// this one can't be memcpy'd since there are index types
@@ -526,20 +568,29 @@ void savemodel( int32_t namelen, char *name, int islodmesh, int version )
 	for ( uint32_t i=0; i<mesh.animseqs_count; i++ )
 	{
 		mesh.animseqs[i].name = readindex();
-		mesh.animseqs[i].group = readindex();
-		mesh.animseqs[i].start_frame = readdword();
-		mesh.animseqs[i].num_frames = readdword();
-		mesh.animseqs[i].function_count = readindex();
-		mesh.animseqs[i].functions =
-			calloc(mesh.animseqs[i].function_count,
-			sizeof(animfunction_t));
-		for ( uint32_t j=0; j<mesh.animseqs[i].function_count;
-			j++ )
+		if ( version >= 40 ) mesh.animseqs[i].group = readindex();
+		if ( version < 40 )
 		{
-			mesh.animseqs[i].functions[j].time =
-				readfloat();
-			mesh.animseqs[i].functions[j].function =
-				readindex();
+			mesh.animseqs[i].start_frame = readword();
+			mesh.animseqs[i].num_frames = readword();
+			fpos += 4;	// unidentified data
+		}
+		else
+		{
+			mesh.animseqs[i].start_frame = readdword();
+			mesh.animseqs[i].num_frames = readdword();
+			mesh.animseqs[i].function_count = readindex();
+			mesh.animseqs[i].functions =
+				calloc(mesh.animseqs[i].function_count,
+				sizeof(animfunction_t));
+			for ( uint32_t j=0; j<mesh.animseqs[i].function_count;
+				j++ )
+			{
+				mesh.animseqs[i].functions[j].time =
+					readfloat();
+				mesh.animseqs[i].functions[j].function =
+					readindex();
+			}
 		}
 		mesh.animseqs[i].rate = readfloat();
 	}
@@ -552,9 +603,17 @@ void savemodel( int32_t namelen, char *name, int islodmesh, int version )
 	memcpy(mesh.connects,pkgfile+fpos,mesh.connects_count
 		*sizeof(connect_t));
 	fpos = mesh.connects_jump;
-	READSTRUCT(mesh.boundingbox2,boundingbox_t)
+	if ( version < 40 )
+	{
+		mesh.boundingboxes_count = readindex();
+		mesh.boundingboxes = calloc(mesh.boundingboxes_count,
+			sizeof(boundingbox_t));
+		for ( uint32_t i=0; i<mesh.boundingboxes_count; i++ )
+			READSTRUCT(mesh.boundingboxes[i],boundingbox_t)
+	}
+	else READSTRUCT(mesh.boundingbox2,boundingbox_t)
 	if ( version > 61 ) READSTRUCT(mesh.boundingsphere2,boundingsphere_t)
-	else READSTRUCT(mesh.boundingsphere2,boundingsphere_61pre_t)
+	else if ( version >= 40 ) READSTRUCT(mesh.boundingsphere2,boundingsphere_61pre_t)
 	if ( version > 61 ) mesh.vertlinks_jump = readdword();
 	mesh.vertlinks_count = readindex();
 	if ( version <= 61 )
@@ -566,19 +625,28 @@ void savemodel( int32_t namelen, char *name, int islodmesh, int version )
 	mesh.textures = calloc(mesh.textures_count,4);
 	for ( uint32_t i=0; i<mesh.textures_count; i++ )
 		mesh.textures[i] = readindex();
-	mesh.boundingboxes_count = readindex();
-	mesh.boundingboxes = calloc(mesh.boundingboxes_count,
-		sizeof(boundingbox_t));
-	for ( uint32_t i=0; i<mesh.boundingboxes_count; i++ )
-		READSTRUCT(mesh.boundingboxes[i],boundingbox_t)
-	mesh.boundingspheres_count = readindex();
-	mesh.boundingspheres = calloc(mesh.boundingspheres_count,
-		sizeof(boundingsphere_t));
-	for ( uint32_t i=0; i<mesh.boundingspheres_count; i++ )
+	if ( version >= 40 )
 	{
-		if ( version > 61 )
-			READSTRUCT(mesh.boundingspheres[i],boundingsphere_t)
-		else READSTRUCT(mesh.boundingspheres[i],boundingsphere_61pre_t)
+		mesh.boundingboxes_count = readindex();
+		mesh.boundingboxes = calloc(mesh.boundingboxes_count,
+			sizeof(boundingbox_t));
+		for ( uint32_t i=0; i<mesh.boundingboxes_count; i++ )
+			READSTRUCT(mesh.boundingboxes[i],boundingbox_t)
+		mesh.boundingspheres_count = readindex();
+		mesh.boundingspheres = calloc(mesh.boundingspheres_count,
+			sizeof(boundingsphere_t));
+		for ( uint32_t i=0; i<mesh.boundingspheres_count; i++ )
+		{
+			if ( version > 61 )
+				READSTRUCT(mesh.boundingspheres[i],boundingsphere_t)
+			else READSTRUCT(mesh.boundingspheres[i],boundingsphere_61pre_t)
+		}
+	}
+	else
+	{
+		// unknown data (various elements of size 6)
+		uint32_t skipme = readindex();
+		fpos += skipme*6;
 	}
 	mesh.frameverts = readdword();
 	mesh.animframes = readdword();
@@ -967,7 +1035,79 @@ finish:
 		fwrite(&dpoly,sizeof(datapoly_t),1,f);
 	}
 	fclose(f);
-	// TODO generate template .uc
+	// generate template .uc
+	snprintf(fname,256,"%.*s.uc",namelen,name);
+	f = fopen(fname,"w");
+	printf(" Generating template script %s\n",fname);
+	fprintf(f,"class %.*s extends Actor;\n\n",namelen,name);
+	if ( islodmesh )
+		fprintf(f,"#exec MESH IMPORT MESH=%.*s"
+		" ANIVFILE=Models\\%.*s_a.3d DATAFILE=Models\\%.*s_d.3d\n",
+		namelen,name,namelen,name,namelen,name);
+	else
+		fprintf(f,"#exec MESH IMPORT MESH=%.*s"
+		" ANIVFILE=Models\\%.*s_a.3d DATAFILE=Models\\%.*s_d.3d"
+		" MLOD=0\n",namelen,name,namelen,name,namelen,name);
+	fprintf(f,"#exec MESH ORIGIN MESH=%.*s X=%g Y=%g Z=%g",namelen,name,
+		mesh.origin.x,mesh.origin.y,mesh.origin.z);
+	if ( mesh.rotorigin.pitch )
+		fprintf(f," PITCH=%g",mesh.rotorigin.pitch/256.);
+	if ( mesh.rotorigin.yaw )
+		fprintf(f," YAW=%g",mesh.rotorigin.yaw/256.);
+	if ( mesh.rotorigin.roll )
+		fprintf(f," ROLL=%g",mesh.rotorigin.roll/256.);
+	fprintf(f,"\n\n");
+	for ( uint32_t i=0; i<mesh.animseqs_count; i++ )
+	{
+		int32_t l = 0, l2 = 0;
+		char *gname =
+			(char*)(pkgfile+getname(mesh.animseqs[i].group,&l));
+		char *aname =
+			(char*)(pkgfile+getname(mesh.animseqs[i].name,&l2));
+		fprintf(f,"#exec MESH SEQUENCE MESH=%.*s SEQ=%.*s"
+			" STARTFRAME=%u NUMFRAMES=%u",namelen,name,l2,aname,
+			mesh.animseqs[i].start_frame,
+			mesh.animseqs[i].num_frames);
+		if ( mesh.animseqs[i].rate != 30. )
+			fprintf(f," RATE=%g",mesh.animseqs[i].rate);
+		if ( strncmp(gname,"None",l) )
+			fprintf(f," GROUP=%.*s",l,gname);
+		fprintf(f,"\n");
+	}
+	fprintf(f,"\n");
+	fprintf(f,"#exec MESHMAP SCALE MESHMAP=%.*s X=%g Y=%g Z=%g\n",
+		namelen,name,mesh.scale.x,mesh.scale.y,mesh.scale.z);
+	for ( uint32_t i=0; i<mesh.textures_count; i++ )
+	{
+		if ( !mesh.textures[i] ) continue;
+		fprintf(f,"#exec MESHMAP SETTEXTURE MESHMAP=%.*s NUM=%u"
+			" TEXTURE=",namelen,name,i);
+		construct_fullname(f,mesh.textures[i]);
+		fprintf(f,"\n");
+	}
+	fprintf(f,"\n");
+	int mfn = 0;
+	for ( uint32_t i=0; i<mesh.animseqs_count; i++ )
+	{
+		if ( !mesh.animseqs[i].function_count ) continue;
+		mfn = 1;
+		int32_t l = 0;
+		char *aname =
+			(char*)(pkgfile+getname(mesh.animseqs[i].name,&l));
+		for ( uint32_t j=0; j<mesh.animseqs[i].function_count; j++ )
+		{
+			int32_t l2 = 0;
+			char *fname = (char*)(pkgfile+getname(mesh.animseqs[i]
+				.functions[j].function,&l2));
+			fprintf(f,"#exec MESH NOTIFY MESH=%.*s SEQ=%.*s "
+				"TIME=%g FUNCTION=%.*s\n",namelen,name,l,aname,
+				mesh.animseqs[i].functions[j].time,l2,fname);
+		}
+	}
+	if ( mfn ) fprintf(f,"\n");
+	// footer
+	fprintf(f,"defaultproperties\n{\n}\n");
+	fclose(f);
 	// cleanup
 	if ( mesh.verts_dx ) free(mesh.verts_dx);
 	if ( mesh.verts_ue1 ) free(mesh.verts_ue1);
@@ -1073,7 +1213,7 @@ int main( int argc, char **argv )
 		// begin reading data
 		size_t prev = fpos;
 		fpos = ofs;
-		if ( head->pkgver < 40 ) fpos += 8;
+		if ( head->pkgver < 40 ) fpos += 4;
 		if ( head->pkgver < 60 ) fpos += 16;
 		int32_t prop = readindex();
 		if ( (uint32_t)prop >= head->nnames )

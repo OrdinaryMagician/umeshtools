@@ -17,11 +17,18 @@ format.
   undesired results. vertmerge is available as a manual alternative.
 - **vertmerge** : [TODO] Merges all specified vertices together as long as they
   have the same position in all frames.
-- **umeshview** : [TODO] Small SDL2 program for displaying models. Left click
-  drag to rotate camera, right click drag to move, mouse wheel for zoom. Page
-  up and page down switch between animation frames. Texture groups are color
-  coded, unreferenced vertices show as red crosses. Requires SDL2 (obviously),
-  OpenGL (also obviously), libepoxy and SDL2_image.
+- **umeshview** : [TODO] Small SDL2 program for displaying models. WASD for
+  movement, Q and E to move up and down, arrow keys for rotation, page up and
+  page down to roll, home to reset animation parameters, end to reset camera
+  parameters. insert and delete to control animation speed, space to pause,
+  enter and backspace to step one frame. Shift can be used as a speed modifier,
+  for some of the movements. Texture groups are color coded, unreferenced
+  vertices show as red squares. Normally you're required to pass the origin,
+  scale and rotation parameters used for mesh import, as the default transforms
+  may not give the best result. Textures can be loaded and assigned from the
+  command line too, with a variety of supported formats, including PCX files
+  directly exported from UnrealEd. Requires SDL2 (obviously), OpenGL (also
+  obviously), libepoxy and SDL2_image.
 - **umesh** : [TODO] The big boy, the visual mesh editor that I initially
   planned to make. Once this one is done, all the other tools will be obsolete.
 - **umodelextract** : A horrible abomination of C code that extracts meshes
@@ -30,8 +37,10 @@ format.
   object data (if you want to inspect the full thing), a plaintext
   representation of the Mesh and LodMesh structures in-package (absolute jumps
   are converted to relative offsets), and most importantly, a generated
-  anivfile and datafile pair (Currently it doesn't generate a script file for
-  re-importing the model).
+  anivfile and datafile pair, plus a script file for re-importing the model.
+  (note that due to mysterious Tim Sweeney black magic, there is no way to
+  tell if a model has been imported with UNMIRROR=1, so this will be missing
+  from the generated .uc file).
 - **texnumsq** : Sometimes models have "scattered" texture numbers (i.e.:
   texture indices don't start at zero, or there are "jumps" between used
   indices). This tool remaps all texture indices to the lowest unused index,
@@ -41,7 +50,9 @@ format.
   up with its own indices. Included for backwards compatibility with stuff that
   expects this sort of nonsense.
 - **umesh2obj** : Creates .obj files for each frame of a mesh.
-- **attacher** : [TODO] Attaches one mesh to the weapon triangle of another.
+- **attacher** : Attaches one mesh to the weapon triangle of another.
+- **unmirror** : Flips the model on the X axis, for models that are usually
+  imported with the UNMIRROR flag in UE1 (e.g.: player models).
 - **polyflip** : Flips a specified set of polys in one datafile (by swapping
   vertices 1 and 2 in them). Can be used to fix silly mistakes that go
   unnoticed if, for example, the mesh is edited without backface culling on.

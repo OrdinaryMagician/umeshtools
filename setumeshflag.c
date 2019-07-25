@@ -42,7 +42,7 @@ int main( int argc, char **argv )
 	if ( argc < 4 )
 	{
 		fprintf(stderr,"usage: setumeshflag <infile> <outfile>"
-			"[-]<type> <index[-index]> [index[-index] [...]]\n");
+			" [-]<type> <index[-index]> [index[-index] [...]]\n");
 		return 1;
 	}
 	if ( argv[3][0] == '-' )

@@ -46,6 +46,11 @@ typedef struct
 	uint16_t framesize;
 } __attribute__((packed)) aniheader_t;
 
+typedef struct
+{
+	int16_t x, y, z, pad;
+} __attribute__((packed)) dxvert_t;
+
 int16_t unpackuvert( uint32_t v, int c )
 {
 	switch ( c )
@@ -131,13 +136,43 @@ const char *ufsrc =
 "\n"
 "void main()\n"
 "{\n"
-"\tFragColor = vec4(1.0,0.0,0.0,1.0);\n"
+"\tFragColor = vec4(1.0,1.0,0.0,1.0);\n"
+"}\n";
+const char *wvsrc =
+"#version 430\n"
+"\n"
+"layout(location=0) in vec3 vPosition;\n"
+"layout(location=1) in vec3 vPosition2;\n"
+"layout(location=2) in vec3 vColor;\n"
+"\n"
+"uniform mat4 MVP;\n"
+"uniform float Interpolation;\n"
+"\n"
+"out vec3 fColor;\n"
+"\n"
+"void main()\n"
+"{\n"
+"\tgl_Position.xyz = (1.0-Interpolation)*vPosition+Interpolation*vPosition2;\n"
+"\tgl_Position.w = 1.0;\n"
+"\tgl_Position = MVP*gl_Position;\n"
+"\tfColor = vColor;\n"
+"}\n";
+const char *wfsrc =
+"#version 430\n"
+"\n"
+"layout(location=0) out vec4 FragColor;\n"
+"\n"
+"in vec3 fColor;\n"
+"\n"
+"void main()\n"
+"{\n"
+"\tFragColor = vec4(fColor,1.0);\n"
 "}\n";
 
-GLint mprog, uprog;
-GLuint vao, vbuf, ubuf;
+GLint mprog, uprog, wprog;
+GLuint vao, vbuf, ubuf, wbuf;
 GLuint tex[9] = {0};
-GLuint vmid, vmid2, viid, vtid, umid, uiid, venvid, vmskid, vunlid;
+GLuint vmid, vmid2, viid, vtid, umid, uiid, venvid, vmskid, vunlid, wmid, wiid;
 
 typedef struct
 {
@@ -168,6 +203,10 @@ typedef struct
 {
 	float p[3];
 } uvboe_t;
+typedef struct
+{
+	float p[3], c[3];
+} wvboe_t;
 
 vect_t *verts;
 vect_t *norms;
@@ -179,6 +218,8 @@ int ngroup;
 int nframe;
 
 int *uverts, nuverts;	// unreferenced vertices
+int wtri[3] = {-1};	// weapon triangle
+int drawwtri = 0, drawuvert = 0;
 
 // vector math helpers, taken from proto-alicegl
 void vadd( vect_t *o, vect_t a, vect_t b )
@@ -286,48 +327,137 @@ void prepare_vbuf( void )
 	glGenVertexArrays(1,&vao);
 	glBindVertexArray(vao);
 	// generate the vbo data for mesh
-	vboe_t *vboe = malloc(0);
 	size_t nvboe = 0;
+	for ( int i=0; i<ngroup; i++ ) nvboe += groups[i].ntri*3;
+	nvboe *= nframe;
+	vboe_t *vboe = calloc(nvboe,sizeof(vboe_t));
+	int m = 0;
 	for ( int i=0; i<nframe; i++ )
 	{
-		for ( int j=0; j<ngroup; j++ ) for ( int k=0; k<groups[j].ntri; k++ )
+		for ( int j=0; j<ngroup; j++ )
+		for ( int k=0; k<groups[j].ntri; k++ )
 		{
 			for ( int l=0; l<3; l++ )
 			{
-				vboe = realloc(vboe,(nvboe+1)*sizeof(vboe_t));
-				vboe[nvboe].p[0] = verts[groups[j].tris[k].v[l]+i*nvert].x;
-				vboe[nvboe].p[1] = verts[groups[j].tris[k].v[l]+i*nvert].y;
-				vboe[nvboe].p[2] = verts[groups[j].tris[k].v[l]+i*nvert].z;
-				vboe[nvboe].n[0] = norms[groups[j].tris[k].v[l]+i*nvert].x;
-				vboe[nvboe].n[1] = norms[groups[j].tris[k].v[l]+i*nvert].y;
-				vboe[nvboe].n[2] = norms[groups[j].tris[k].v[l]+i*nvert].z;
-				vboe[nvboe].c[0] = groups[j].tris[k].uv[l][0];
-				vboe[nvboe].c[1] = groups[j].tris[k].uv[l][1];
-				nvboe++;
+				vboe[m].p[0] = verts[groups[j].tris[k].v[l]
+					+i*nvert].x;
+				vboe[m].p[1] = verts[groups[j].tris[k].v[l]
+					+i*nvert].y;
+				vboe[m].p[2] = verts[groups[j].tris[k].v[l]
+					+i*nvert].z;
+				vboe[m].n[0] = norms[groups[j].tris[k].v[l]
+					+i*nvert].x;
+				vboe[m].n[1] = norms[groups[j].tris[k].v[l]
+					+i*nvert].y;
+				vboe[m].n[2] = norms[groups[j].tris[k].v[l]
+					+i*nvert].z;
+				vboe[m].c[0] = groups[j].tris[k].uv[l][0];
+				vboe[m].c[1] = groups[j].tris[k].uv[l][1];
+				m++;
 			}
 		}
 	}
 	glGenBuffers(1,&vbuf);
 	glBindBuffer(GL_ARRAY_BUFFER,vbuf);
-	glBufferData(GL_ARRAY_BUFFER,sizeof(vboe_t)*nvboe,&vboe[0],GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER,sizeof(vboe_t)*nvboe,&vboe[0],
+		GL_STATIC_DRAW);
 	free(vboe);
+	if ( !drawuvert ) goto skip_uvert;
 	// generate the vbo data for scattered verts
-	uvboe_t *uvboe = malloc(0);
-	nvboe = 0;
+	nvboe = nframe*nuverts;
+	uvboe_t *uvboe = calloc(nvboe,sizeof(uvboe_t));
+	int k = 0;
 	for ( int i=0; i<nframe; i++ )
 	{
 		for ( int j=0; j<nuverts; j++ )
 		{
-			uvboe = realloc(uvboe,(nvboe+1)*sizeof(uvboe_t));
-			uvboe[nvboe].p[0] = verts[uverts[j]+i*nvert].x;
-			uvboe[nvboe].p[1] = verts[uverts[j]+i*nvert].y;
-			uvboe[nvboe].p[2] = verts[uverts[j]+i*nvert].z;
-			nvboe++;
+			uvboe[k].p[0] = verts[uverts[j]+i*nvert].x;
+			uvboe[k].p[1] = verts[uverts[j]+i*nvert].y;
+			uvboe[k].p[2] = verts[uverts[j]+i*nvert].z;
+			k++;
 		}
 	}
 	glGenBuffers(1,&ubuf);
 	glBindBuffer(GL_ARRAY_BUFFER,ubuf);
-	glBufferData(GL_ARRAY_BUFFER,sizeof(uvboe_t)*nvboe,&uvboe[0],GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER,sizeof(uvboe_t)*nvboe,&uvboe[0],
+		GL_STATIC_DRAW);
+skip_uvert:
+	if ( (wtri[0] == -1) || !drawwtri ) return;
+	// generate the vbo data for weapon triangle lines
+	// only needs 12 vertices per frame in total
+	wvboe_t *wvboe = calloc(12*nframe,sizeof(wvboe_t));
+	for ( int i=0; i<nframe; i++ )
+	{
+		// weapon triangle (magenta)
+		for ( int j=0; j<6; j+=2 )
+		{
+			wvboe[j+i*12].p[0] = verts[wtri[j/2]+i*nvert].x;
+			wvboe[j+i*12].p[1] = verts[wtri[j/2]+i*nvert].y;
+			wvboe[j+i*12].p[2] = verts[wtri[j/2]+i*nvert].z;
+			wvboe[j+i*12].c[0] = 255;
+			wvboe[j+i*12].c[1] = 0;
+			wvboe[j+i*12].c[2] = 255;
+			wvboe[j+1+i*12].p[0] = verts[wtri[((j/2)+1)%3]+i*nvert].x;
+			wvboe[j+1+i*12].p[1] = verts[wtri[((j/2)+1)%3]+i*nvert].y;
+			wvboe[j+1+i*12].p[2] = verts[wtri[((j/2)+1)%3]+i*nvert].z;
+			wvboe[j+1+i*12].c[0] = 255;
+			wvboe[j+1+i*12].c[1] = 0;
+			wvboe[j+1+i*12].c[2] = 255;
+		}
+		// attach coords (rgb)
+		vect_t o, x, y, z;
+		vadd(&o,verts[wtri[0]+i*nvert],verts[wtri[1]+i*nvert]);
+		vscale(&o,o,.5f);
+		vsub(&z,verts[wtri[0]+i*nvert],verts[wtri[1]+i*nvert]);
+		normalize(&z);
+		vect_t ac, ab;
+		vsub(&ac,verts[wtri[2]+i*nvert],verts[wtri[0]+i*nvert]);
+		vsub(&ab,verts[wtri[1]+i*nvert],verts[wtri[0]+i*nvert]);
+		normalize(&ac);
+		normalize(&ab);
+		cross(&y,ac,ab);
+		cross(&x,y,z);
+		wvboe[6+i*12].p[0] = o.x;
+		wvboe[6+i*12].p[1] = o.y;
+		wvboe[6+i*12].p[2] = o.z;
+		wvboe[6+i*12].c[0] = 255;
+		wvboe[6+i*12].c[1] = 0;
+		wvboe[6+i*12].c[2] = 0;
+		wvboe[7+i*12].p[0] = o.x+x.x*8.f;
+		wvboe[7+i*12].p[1] = o.y+x.y*8.f;
+		wvboe[7+i*12].p[2] = o.z+x.z*8.f;
+		wvboe[7+i*12].c[0] = 255;
+		wvboe[7+i*12].c[1] = 0;
+		wvboe[7+i*12].c[2] = 0;
+		wvboe[8+i*12].p[0] = o.x;
+		wvboe[8+i*12].p[1] = o.y;
+		wvboe[8+i*12].p[2] = o.z;
+		wvboe[8+i*12].c[0] = 0;
+		wvboe[8+i*12].c[1] = 255;
+		wvboe[8+i*12].c[2] = 0;
+		wvboe[9+i*12].p[0] = o.x-y.x*8.f;	// right-handed y
+		wvboe[9+i*12].p[1] = o.y-y.y*8.f;
+		wvboe[9+i*12].p[2] = o.z-y.z*8.f;
+		wvboe[9+i*12].c[0] = 0;
+		wvboe[9+i*12].c[1] = 255;
+		wvboe[9+i*12].c[2] = 0;
+		wvboe[10+i*12].p[0] = o.x;
+		wvboe[10+i*12].p[1] = o.y;
+		wvboe[10+i*12].p[2] = o.z;
+		wvboe[10+i*12].c[0] = 0;
+		wvboe[10+i*12].c[1] = 0;
+		wvboe[10+i*12].c[2] = 255;
+		wvboe[11+i*12].p[0] = o.x+z.x*8.f;
+		wvboe[11+i*12].p[1] = o.y+z.y*8.f;
+		wvboe[11+i*12].p[2] = o.z+z.z*8.f;
+		wvboe[11+i*12].c[0] = 0;
+		wvboe[11+i*12].c[1] = 0;
+		wvboe[11+i*12].c[2] = 255;
+	}
+	glGenBuffers(1,&wbuf);
+	glBindBuffer(GL_ARRAY_BUFFER,wbuf);
+	glBufferData(GL_ARRAY_BUFFER,sizeof(wvboe_t)*12*nframe,&wvboe[0],
+		GL_STATIC_DRAW);
 }
 
 void rendermesh( void )
@@ -367,11 +497,16 @@ void rendermesh( void )
 	glEnableVertexAttribArray(2);
 	glEnableVertexAttribArray(3);
 	glEnableVertexAttribArray(4);
-	glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(vboe_t),(char*)(framea*framesize*sizeof(vboe_t)));
-	glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,sizeof(vboe_t),(char*)(framea*framesize*sizeof(vboe_t)+12));
-	glVertexAttribPointer(2,2,GL_FLOAT,GL_FALSE,sizeof(vboe_t),(char*)(framea*framesize*sizeof(vboe_t)+24));
-	glVertexAttribPointer(3,3,GL_FLOAT,GL_FALSE,sizeof(vboe_t),(char*)(frameb*framesize*sizeof(vboe_t)));
-	glVertexAttribPointer(4,3,GL_FLOAT,GL_FALSE,sizeof(vboe_t),(char*)(frameb*framesize*sizeof(vboe_t)+12));
+	glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(vboe_t),
+		(char*)(framea*framesize*sizeof(vboe_t)));
+	glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,sizeof(vboe_t),
+		(char*)(framea*framesize*sizeof(vboe_t)+12));
+	glVertexAttribPointer(2,2,GL_FLOAT,GL_FALSE,sizeof(vboe_t),
+		(char*)(framea*framesize*sizeof(vboe_t)+24));
+	glVertexAttribPointer(3,3,GL_FLOAT,GL_FALSE,sizeof(vboe_t),
+		(char*)(frameb*framesize*sizeof(vboe_t)));
+	glVertexAttribPointer(4,3,GL_FLOAT,GL_FALSE,sizeof(vboe_t),
+		(char*)(frameb*framesize*sizeof(vboe_t)+12));
 	int vofs = 0;
 	for ( int i=0; i<ngroup; i++ )
 	{
@@ -410,6 +545,7 @@ void rendermesh( void )
 		glDrawArrays(GL_TRIANGLES,vofs,groups[i].ntri*3);
 		vofs += groups[i].ntri*3;
 	}
+	if ( !drawuvert ) goto skipdraw_uvert;
 	glDisable(GL_DEPTH_TEST);
 	glBlendFunc(GL_ONE,GL_ZERO);
 	glDepthMask(GL_FALSE);
@@ -422,9 +558,29 @@ void rendermesh( void )
 	glDisableVertexAttribArray(2);
 	glDisableVertexAttribArray(3);
 	glDisableVertexAttribArray(4);
-	glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(uvboe_t),(char*)(framea*nuverts*sizeof(uvboe_t)));
-	glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,sizeof(uvboe_t),(char*)(frameb*nuverts*sizeof(uvboe_t)));
+	glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(uvboe_t),
+		(char*)(framea*nuverts*sizeof(uvboe_t)));
+	glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,sizeof(uvboe_t),
+		(char*)(frameb*nuverts*sizeof(uvboe_t)));
 	glDrawArrays(GL_POINTS,0,nuverts);
+skipdraw_uvert:
+	if ( (wtri[0] == -1) || !drawwtri ) return;
+	glUseProgram(wprog);
+	glUniformMatrix4fv(wmid,1,GL_FALSE,&mvp.c[0][0]);
+	glUniform1f(wiid,animframe-framea);
+	glBindBuffer(GL_ARRAY_BUFFER,wbuf);
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glEnableVertexAttribArray(2);
+	glDisableVertexAttribArray(3);
+	glDisableVertexAttribArray(4);
+	glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,sizeof(wvboe_t),
+		(char*)(framea*12*sizeof(wvboe_t)));
+	glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,sizeof(wvboe_t),
+		(char*)(frameb*12*sizeof(wvboe_t)));
+	glVertexAttribPointer(2,3,GL_FLOAT,GL_FALSE,sizeof(wvboe_t),
+		(char*)(framea*12*sizeof(wvboe_t)+12));
+	glDrawArrays(GL_LINES,0,12);
 }
 
 #define NANOS_SEC 1000000000L
@@ -560,11 +716,11 @@ int mesh_load( const char *aniv, const char *data )
 		return 2;
 	}
 	dataheader_t dhead;
-	datapoly_t dpoly;
+	datapoly_t *dpoly = 0;
 	aniheader_t ahead;
-	uint32_t avert;
-	int16_t dxvert[4];
-	fread(&dhead,1,sizeof(dataheader_t),datafile);
+	uint32_t *avert = 0;
+	dxvert_t *dxvert = 0;
+	fread(&dhead,sizeof(dataheader_t),1,datafile);
 	if ( feof(datafile) )
 	{
 		fprintf(stderr,"Premature end of file reached at %lu\n",
@@ -577,51 +733,59 @@ int mesh_load( const char *aniv, const char *data )
 	nvert = dhead.numverts;
 	groups = malloc(0);
 	ngroup = 0;
-	tris = calloc(sizeof(tri_t),dhead.numpolys);
+	tris = calloc(dhead.numpolys,sizeof(tri_t));
 	ntri = dhead.numpolys;
-	int *refs = calloc(sizeof(int),dhead.numverts);
+	int *refs = calloc(dhead.numverts,sizeof(int));
 	int c = -1;
+	dpoly = calloc(dhead.numpolys,sizeof(datapoly_t));
+	fread(dpoly,sizeof(datapoly_t),dhead.numpolys,datafile);
+	if ( feof(datafile) )
+	{
+		free(dpoly);
+		free(tris);
+		free(refs);
+		fprintf(stderr,"Premature end of file reached at "
+			"%lu\n",ftell(datafile));
+		fclose(datafile);
+		return 8;
+	}
 	for ( int i=0; i<dhead.numpolys; i++ )
 	{
-		fread(&dpoly,1,sizeof(datapoly_t),datafile);
-		if ( feof(datafile) )
+		if ( dpoly[i].type&8 )
 		{
-			free(tris);
-			free(refs);
-			fprintf(stderr,"Premature end of file reached at "
-				"%lu\n",ftell(datafile));
-			fclose(datafile);
-			return 8;
+			wtri[0] = dpoly[i].vertices[0];
+			wtri[1] = dpoly[i].vertices[tform.unmirror?2:1];
+			wtri[2] = dpoly[i].vertices[tform.unmirror?1:2];
 		}
-		refs[dpoly.vertices[0]]++;
-		refs[dpoly.vertices[1]]++;
-		refs[dpoly.vertices[2]]++;
+		refs[dpoly[i].vertices[0]]++;
+		refs[dpoly[i].vertices[1]]++;
+		refs[dpoly[i].vertices[2]]++;
 		if ( tform.unmirror )
 		{
-			tris[i].v[0] = dpoly.vertices[0];
-			tris[i].v[1] = dpoly.vertices[2];
-			tris[i].v[2] = dpoly.vertices[1];
-			tris[i].uv[0][0] = dpoly.uv[0][0]/255.f;
-			tris[i].uv[0][1] = dpoly.uv[0][1]/255.f;
-			tris[i].uv[1][0] = dpoly.uv[2][0]/255.f;
-			tris[i].uv[1][1] = dpoly.uv[2][1]/255.f;
-			tris[i].uv[2][0] = dpoly.uv[1][0]/255.f;
-			tris[i].uv[2][1] = dpoly.uv[1][1]/255.f;
+			tris[i].v[0] = dpoly[i].vertices[0];
+			tris[i].v[1] = dpoly[i].vertices[2];
+			tris[i].v[2] = dpoly[i].vertices[1];
+			tris[i].uv[0][0] = dpoly[i].uv[0][0]/255.f;
+			tris[i].uv[0][1] = dpoly[i].uv[0][1]/255.f;
+			tris[i].uv[1][0] = dpoly[i].uv[2][0]/255.f;
+			tris[i].uv[1][1] = dpoly[i].uv[2][1]/255.f;
+			tris[i].uv[2][0] = dpoly[i].uv[1][0]/255.f;
+			tris[i].uv[2][1] = dpoly[i].uv[1][1]/255.f;
 		}
 		else
 		{
-			tris[i].v[0] = dpoly.vertices[0];
-			tris[i].v[1] = dpoly.vertices[1];
-			tris[i].v[2] = dpoly.vertices[2];
-			tris[i].uv[0][0] = dpoly.uv[0][0]/255.f;
-			tris[i].uv[0][1] = dpoly.uv[0][1]/255.f;
-			tris[i].uv[1][0] = dpoly.uv[1][0]/255.f;
-			tris[i].uv[1][1] = dpoly.uv[1][1]/255.f;
-			tris[i].uv[2][0] = dpoly.uv[2][0]/255.f;
-			tris[i].uv[2][1] = dpoly.uv[2][1]/255.f;
+			tris[i].v[0] = dpoly[i].vertices[0];
+			tris[i].v[1] = dpoly[i].vertices[1];
+			tris[i].v[2] = dpoly[i].vertices[2];
+			tris[i].uv[0][0] = dpoly[i].uv[0][0]/255.f;
+			tris[i].uv[0][1] = dpoly[i].uv[0][1]/255.f;
+			tris[i].uv[1][0] = dpoly[i].uv[1][0]/255.f;
+			tris[i].uv[1][1] = dpoly[i].uv[1][1]/255.f;
+			tris[i].uv[2][0] = dpoly[i].uv[2][0]/255.f;
+			tris[i].uv[2][1] = dpoly[i].uv[2][1]/255.f;
 		}
-		int texn = dpoly.texnum;
-		int type = dpoly.type;
+		int texn = dpoly[i].texnum;
+		int type = dpoly[i].type;
 group_recheck:
 		if ( c == -1 )
 		{
@@ -649,12 +813,13 @@ group_recheck:
 		groups[c].tris = realloc(groups[c].tris,sizeof(tri_t)*ntri+1);
 		groups[c].tris[groups[c].ntri++] = tris[i];
 	}
+	free(dpoly);
 	// sort groups by render styles
 	qsort(groups,ngroup,sizeof(group_t),matcmp);
 	// populate unused verts
 	nuverts = 0;
 	for ( int i=0; i<dhead.numverts; i++ ) if ( !refs[i] ) nuverts++;
-	uverts = calloc(sizeof(int),nuverts);
+	uverts = calloc(nuverts,sizeof(int));
 	int j = 0;
 	for ( int i=0; i<dhead.numverts; i++ ) if ( !refs[i] ) uverts[j++] = i;
 	free(refs);
@@ -664,7 +829,7 @@ group_recheck:
 		fprintf(stderr,"Couldn't open anivfile: %s\n",strerror(errno));
 		return 4;
 	}
-	fread(&ahead,1,sizeof(ahead),anivfile);
+	fread(&ahead,sizeof(aniheader_t),1,anivfile);
 	if ( feof(anivfile) )
 	{
 		free(tris);
@@ -676,8 +841,8 @@ group_recheck:
 		fclose(anivfile);
 		return 8;
 	}
-	verts = calloc(sizeof(vect_t),dhead.numverts*ahead.numframes);
-	norms = calloc(sizeof(vect_t),dhead.numverts*ahead.numframes);
+	verts = calloc(dhead.numverts*ahead.numframes,sizeof(vect_t));
+	norms = calloc(dhead.numverts*ahead.numframes,sizeof(vect_t));
 	nframe = ahead.numframes;
 	// check for Deus Ex's 16-bit vertex format
 	int usedx;
@@ -697,39 +862,53 @@ group_recheck:
 		fclose(anivfile);
 		return 16;
 	}
+	if ( usedx )
+	{
+		dxvert = calloc(ahead.numframes*dhead.numverts,
+			sizeof(dxvert_t));
+		fread(dxvert,sizeof(dxvert_t),ahead.numframes*dhead.numverts,
+			anivfile);
+	}
+	else
+	{
+		avert = calloc(ahead.numframes*dhead.numverts,
+			sizeof(uint32_t));
+		fread(avert,sizeof(uint32_t),ahead.numframes*dhead.numverts,
+			anivfile);
+	}
+	if ( feof(anivfile) )
+	{
+		if ( usedx ) free(dxvert);
+		else free(avert);
+		free(verts);
+		free(norms);
+		free(tris);
+		free(uverts);
+		for ( int i=0; i<ngroup; i++ )
+			free(groups[i].tris);
+		free(groups);
+		fprintf(stderr,"Premature end of file reached at %lu\n",
+			ftell(anivfile));
+		fclose(anivfile);
+		return 8;
+	}
 	for ( int i=0; i<ahead.numframes; i++ )
 	{
 		int vs = dhead.numverts*i;
 		// load vertices
 		for ( int j=0; j<dhead.numverts; j++ )
 		{
-			if ( usedx ) fread(dxvert,4,sizeof(int16_t),anivfile);
-			else fread(&avert,1,sizeof(avert),anivfile);
-			if ( feof(anivfile) )
-			{
-				free(verts);
-				free(norms);
-				free(tris);
-				free(uverts);
-				for ( int i=0; i<ngroup; i++ )
-					free(groups[i].tris);
-				free(groups);
-				fprintf(stderr,"Premature end of file reached "
-					"at %lu\n",ftell(anivfile));
-				fclose(anivfile);
-				return 8;
-			}
 			if ( usedx )
 			{
-				verts[j+vs].x = dxvert[0];
-				verts[j+vs].y = dxvert[1];
-				verts[j+vs].z = dxvert[2];
+				verts[j+vs].x = dxvert[j+vs].x;
+				verts[j+vs].y = dxvert[j+vs].y;
+				verts[j+vs].z = dxvert[j+vs].z;
 			}
 			else
 			{
-				verts[j+vs].x = unpackuvert(avert,0)/32.f;
-				verts[j+vs].y = unpackuvert(avert,1)/32.f;
-				verts[j+vs].z = unpackuvert(avert,2)/64.f;
+				verts[j+vs].x = unpackuvert(avert[j+vs],0)/32.f;
+				verts[j+vs].y = unpackuvert(avert[j+vs],1)/32.f;
+				verts[j+vs].z = unpackuvert(avert[j+vs],2)/64.f;
 			}
 			transform(&verts[j+vs],&tform);
 		}
@@ -763,6 +942,8 @@ group_recheck:
 			norms[j+vs] = nsum;
 		}
 	}
+	if ( usedx ) free(dxvert);
+	else free(avert);
 	// calc frame size
 	for ( int i=0; i<ngroup; i++ ) framesize += groups[i].ntri*3;
 	return 0;
@@ -775,10 +956,12 @@ void tex_load( unsigned n, const char *filename )
 	if ( !tx ) return;
 	// set first index to translucent
 	if ( tx->format->palette ) tx->format->palette->colors[0].a = 0;
-	SDL_Surface *txconv = SDL_ConvertSurfaceFormat(tx,SDL_PIXELFORMAT_RGBA32,0);
+	SDL_Surface *txconv = SDL_ConvertSurfaceFormat(tx,
+		SDL_PIXELFORMAT_RGBA32,0);
 	glGenTextures(1,&tex[n]);
 	glBindTexture(GL_TEXTURE_2D,tex[n]);
-	glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,txconv->w,txconv->h,0,GL_RGBA,GL_UNSIGNED_BYTE,txconv->pixels);
+	glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,txconv->w,txconv->h,0,GL_RGBA,
+		GL_UNSIGNED_BYTE,txconv->pixels);
 	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
 	SDL_FreeSurface(txconv);
@@ -792,7 +975,9 @@ int main( int argc, char **argv )
 	if ( argc < 3 )
 	{
 		fprintf(stderr,"usage: umeshview <anivfile> <datafile>"
-			" [-f] [-p posX posY posZ] [-r pitch yaw roll] [-s scaleX scaleY scaleZ] [-t # <texture> ...]\n");
+			" [-f] [-p posX posY posZ] [-r pitch yaw roll]"
+			" [-s scaleX scaleY scaleZ] [-t # <texture> ...]"
+			" [-drawweapon] [-drawunref]\n");
 		return 1;
 	}
 	SDL_Init(SDL_INIT_VIDEO|SDL_INIT_EVENTS);
@@ -845,6 +1030,10 @@ int main( int argc, char **argv )
 				sscanf(argv[++i],"%u",&n);
 				tex_load(n,argv[++i]);
 			}
+			else if ( !strcmp(argv[i],"-drawweapon") )
+				drawwtri = 1;
+			else if ( !strcmp(argv[i],"-drawunref") )
+				drawuvert = 1;
 		}
 	}
 	int res = mesh_load(argv[1],argv[2]);
@@ -852,10 +1041,11 @@ int main( int argc, char **argv )
 	for ( int i=0; i<9; i++ )
 	{
 		if ( tex[i] ) continue;
-		unsigned char gentex[4] = {rand()%256,rand()%256,rand()%256,255};
+		unsigned char gentex[3] = {rand()%256,rand()%256,rand()%256};
 		glGenTextures(1,&tex[i]);
 		glBindTexture(GL_TEXTURE_2D,tex[i]);
-		glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,1,1,0,GL_RGBA,GL_UNSIGNED_BYTE,&gentex);
+		glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,1,1,0,GL_RGB,
+			GL_UNSIGNED_BYTE,&gentex);
 		glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
 	}
@@ -879,6 +1069,13 @@ int main( int argc, char **argv )
 	glDeleteShader(vert);
 	umid = glGetUniformLocation(uprog,"MVP");
 	uiid = glGetUniformLocation(uprog,"Interpolation");
+	if ( (frag=compile_shader(GL_FRAGMENT_SHADER,wfsrc)) == -1 ) return 32;
+	if ( (vert=compile_shader(GL_VERTEX_SHADER,wvsrc)) == -1 ) return 32;
+	if ( (wprog=link_shader(-1,vert,frag)) == -1 ) return 32;
+	glDeleteShader(frag);
+	glDeleteShader(vert);
+	wmid = glGetUniformLocation(wprog,"MVP");
+	wiid = glGetUniformLocation(wprog,"Interpolation");
 	glPointSize(4.f);
 	glEnable(GL_DEPTH_TEST);
 	glEnable(GL_CULL_FACE);
@@ -897,29 +1094,51 @@ int main( int argc, char **argv )
 		while ( SDL_PollEvent(&e) )
 		{
 			if ( e.type == SDL_QUIT ) active = 0;
-			else if ( (e.type == SDL_KEYDOWN) || (e.type == SDL_KEYUP) )
+			else if ( (e.type == SDL_KEYDOWN)
+				|| (e.type == SDL_KEYUP) )
 			{
-				if ( e.key.keysym.sym == SDLK_a ) inputs[0] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_d ) inputs[1] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_q ) inputs[2] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_e ) inputs[3] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_w ) inputs[4] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_s ) inputs[5] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_LEFT ) inputs[6] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_RIGHT ) inputs[7] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_PAGEUP ) inputs[8] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_PAGEDOWN ) inputs[9] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_UP ) inputs[10] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_DOWN ) inputs[11] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_END ) inputs[12] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_HOME ) inputs[13] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_INSERT ) inputs[14] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_DELETE ) inputs[15] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_SPACE ) inputs[16] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_RETURN ) inputs[17] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_BACKSPACE ) inputs[18] = (e.type==SDL_KEYDOWN);
-				else if ( e.key.keysym.sym == SDLK_ESCAPE ) inputs[19] = (e.type==SDL_KEYDOWN);
-				if ( e.key.keysym.mod&KMOD_LSHIFT ) inputs[20] = 1;
+				if ( e.key.keysym.sym == SDLK_a )
+					inputs[0] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_d )
+					inputs[1] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_q )
+					inputs[2] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_e )
+					inputs[3] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_w )
+					inputs[4] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_s )
+					inputs[5] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_LEFT )
+					inputs[6] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_RIGHT )
+					inputs[7] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_PAGEUP )
+					inputs[8] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_PAGEDOWN )
+					inputs[9] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_UP )
+					inputs[10] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_DOWN )
+					inputs[11] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_END )
+					inputs[12] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_HOME )
+					inputs[13] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_INSERT )
+					inputs[14] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_DELETE )
+					inputs[15] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_SPACE )
+					inputs[16] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_RETURN )
+					inputs[17] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_BACKSPACE )
+					inputs[18] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_ESCAPE )
+					inputs[19] = (e.type==SDL_KEYDOWN);
+				if ( e.key.keysym.mod&KMOD_LSHIFT )
+					inputs[20] = 1;
 				else inputs[20] = 0;
 			}
 		}
@@ -952,7 +1171,8 @@ int main( int argc, char **argv )
 			animrate = 30.f;
 		}
 		if ( inputs[14] ) animrate += 1.f;
-		if ( inputs[15] ) animrate = (animrate-1.f<1.f)?1.f:(animrate-1.f);
+		if ( inputs[15] )
+			animrate = (animrate-1.f<1.f)?1.f:(animrate-1.f);
 		if ( inputs[16] )
 		{
 			inputs[16] = 0;
@@ -972,7 +1192,7 @@ int main( int argc, char **argv )
 			if ( animframe < 0 )
 				animframe = nframe-1;
 		}
-		if ( inputs[19]  )active = 0;
+		if ( inputs[19] ) active = 0;
 		tick = ticker();
 		rendermesh();
 		SDL_GL_SwapWindow(win);

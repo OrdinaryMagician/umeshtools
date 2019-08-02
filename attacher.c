@@ -200,21 +200,26 @@ void detransform( vector_t *v, transform_t *t )
 
 vector_t *basev;	// vertices of base mesh
 vector_t tri_pos, tri_X, tri_Y, tri_Z;	// computed weapon triangle coords
+int tri_shrink = 1;	// if the triangle is shrunk up to a certain margin
+			// the weapon will be scaled to zero
+			// the only real case where this would be needed is
+			// for dismemberment animations (e.g.: unreal's male
+			// player models)
 vector_t *attachv;	// vertices of attached mesh
 
 // transforms a vector by the current weapon triangle coords
 void transformbywtri( vector_t *v )
 {
 	vector_t vo = {tri_pos.x,tri_pos.y,tri_pos.z};
-	vo.x += v->x*tri_X.x;
-	vo.y += v->x*tri_X.y;
-	vo.z += v->x*tri_X.z;
-	vo.x += v->y*tri_Y.x;
-	vo.y += v->y*tri_Y.y;
-	vo.z += v->y*tri_Y.z;
-	vo.x += v->z*tri_Z.x;
-	vo.y += v->z*tri_Z.y;
-	vo.z += v->z*tri_Z.z;
+	vo.x += v->x*tri_X.x*tri_shrink;
+	vo.y += v->x*tri_X.y*tri_shrink;
+	vo.z += v->x*tri_X.z*tri_shrink;
+	vo.x += v->y*tri_Y.x*tri_shrink;
+	vo.y += v->y*tri_Y.y*tri_shrink;
+	vo.z += v->y*tri_Y.z*tri_shrink;
+	vo.x += v->z*tri_Z.x*tri_shrink;
+	vo.y += v->z*tri_Z.y*tri_shrink;
+	vo.z += v->z*tri_Z.z*tri_shrink;
 	v->x = vo.x;
 	v->y = vo.y;
 	v->z = vo.z;
@@ -658,6 +663,20 @@ int main( int argc, char **argv )
 			tri_X.x = tri_Y.y*tri_Z.z-tri_Y.z*tri_Z.y;
 			tri_X.y = tri_Y.z*tri_Z.x-tri_Y.x*tri_Z.z;
 			tri_X.z = tri_Y.x*tri_Z.y-tri_Y.y*tri_Z.x;
+			// shrink check, needs to check raw vertex distance
+			if ( dxvert_attach )
+			{
+				ac.x = dxvert_base[vc].x-dxvert_base[va].x;
+				ac.y = dxvert_base[vc].y-dxvert_base[va].y;
+				ac.z = dxvert_base[vc].z-dxvert_base[va].z;
+			}
+			else
+			{
+				ac.x = (unpackuvert(avert_base[vc],0)-unpackuvert(avert_base[va],0))/32.f;
+				ac.y = (unpackuvert(avert_base[vc],1)-unpackuvert(avert_base[va],1))/32.f;
+				ac.z = (unpackuvert(avert_base[vc],2)-unpackuvert(avert_base[va],2))/64.f;
+			}
+			tri_shrink = (sqrtf(ac.x*ac.x+ac.y*ac.y+ac.z*ac.z)>8.f);
 			for ( int j=0; j<dhead_attach.numverts; j++ )
 				transformbywtri(&attachv[j+i*dhead_attach.numverts]);
 		}

@@ -244,14 +244,78 @@ dxvert_t *dxvert_out;
 int attachskinofs;	// multiskin offset for attached mesh in final file
 int tri_index;		// index in base model for weapon triangle
 
-int attachonly = 0;		// final model will only contain attached mesh
+int attachonly = 0;	// final model will only contain attached mesh
+int nowtri = 0;		// just merges both models without using the weapon triangle
+int attachframe = 0;	// base frame to use for the attached model
 
 int main( int argc, char **argv )
 {
 	if ( argc < 7 )
 	{
-		fprintf(stderr,"usage: attacher <_a.3d base> <_d.3d base> <_a.3d attach> <_d.3d attach> <_a.3d output> <_d.3d output> [-p1 posX posY posZ] [-p2 posX posY posZ] [-f1] [-f2] [-r1 pitch yaw roll] [-r2 pitch yaw roll] [-s1 scaleX scaleY scaleZ] [-s2 scaleX scaleY scaleZ] [-s3 scaleX scaleY scaleZ] [-attachonly]\n");
+		fprintf(stderr,"usage: attacher <_a.3d base> <_d.3d base> <_a.3d attach> <_d.3d attach> <_a.3d output> <_d.3d output> [-p1 posX posY posZ] [-p2 posX posY posZ] [-f1] [-f2] [-r1 pitch yaw roll] [-r2 pitch yaw roll] [-s1 scaleX scaleY scaleZ] [-s2 scaleX scaleY scaleZ] [-s3 scaleX scaleY scaleZ] [-attachonly] [-nowtri] [-attachframe #]\n");
 		return 1;
+	}
+	// read transforms
+	for ( int i=5; i<argc; i++ )
+	{
+		if ( !strcmp(argv[i],"-p1") )
+		{
+			if ( argc < i+3 ) break;
+			sscanf(argv[++i],"%f",&basetform.ofsX);
+			sscanf(argv[++i],"%f",&basetform.ofsY);
+			sscanf(argv[++i],"%f",&basetform.ofsZ);
+		}
+		else if ( !strcmp(argv[i],"-p2") )
+		{
+			if ( argc < i+3 ) break;
+			sscanf(argv[++i],"%f",&attachtform.ofsX);
+			sscanf(argv[++i],"%f",&attachtform.ofsY);
+			sscanf(argv[++i],"%f",&attachtform.ofsZ);
+		}
+		else if ( !strcmp(argv[i],"-f1") ) basetform.unmirror = 1;
+		else if ( !strcmp(argv[i],"-f2") ) attachtform.unmirror = 1;
+		else if ( !strcmp(argv[i],"-r1") )
+		{
+			if ( argc < i+3 ) break;
+			sscanf(argv[++i],"%hhd",&basetform.pitch);
+			sscanf(argv[++i],"%hhd",&basetform.yaw);
+			sscanf(argv[++i],"%hhd",&basetform.roll);
+		}
+		else if ( !strcmp(argv[i],"-r2") )
+		{
+			if ( argc < i+3 ) break;
+			sscanf(argv[++i],"%hhd",&attachtform.pitch);
+			sscanf(argv[++i],"%hhd",&attachtform.yaw);
+			sscanf(argv[++i],"%hhd",&attachtform.roll);
+		}
+		else if ( !strcmp(argv[i],"-s1") )
+		{
+			if ( argc < i+3 ) break;
+			sscanf(argv[++i],"%f",&basetform.scaleX);
+			sscanf(argv[++i],"%f",&basetform.scaleY);
+			sscanf(argv[++i],"%f",&basetform.scaleZ);
+		}
+		else if ( !strcmp(argv[i],"-s2") )
+		{
+			if ( argc < i+3 ) break;
+			sscanf(argv[++i],"%f",&attachtform.scaleX);
+			sscanf(argv[++i],"%f",&attachtform.scaleY);
+			sscanf(argv[++i],"%f",&attachtform.scaleZ);
+		}
+		else if ( !strcmp(argv[i],"-s3") )
+		{
+			if ( argc < i+3 ) break;
+			sscanf(argv[++i],"%f",&scaleOutX);
+			sscanf(argv[++i],"%f",&scaleOutY);
+			sscanf(argv[++i],"%f",&scaleOutZ);
+		}
+		else if ( !strcmp(argv[i],"-attachonly") ) attachonly = 1;
+		else if ( !strcmp(argv[i],"-nowtri") ) nowtri = 1;
+		else if ( !strcmp(argv[i],"-attachframe") )
+		{
+			if ( argc < i+1 ) break;
+			sscanf(argv[++i],"%d",&attachframe);
+		}
 	}
 	FILE *datafile, *anivfile;
 	// read base datafile
@@ -286,7 +350,7 @@ int main( int argc, char **argv )
 		if ( dpoly_base[i].type&8 ) tri_index = i;
 	}
 	fclose(datafile);
-	if ( tri_index == -1 )
+	if ( (tri_index == -1) && !nowtri )
 	{
 		free(dpoly_base);
 		fprintf(stderr,"Datafile '%s' contains no weapon triangle\n",argv[2]);
@@ -422,86 +486,76 @@ int main( int argc, char **argv )
 		fclose(anivfile);
 		return 16;
 	}
-	// read base frame
-	for ( int i=0; i<dhead_attach.numverts; i++ )
+	if ( nowtri && (ahead_attach.numframes != ahead_base.numframes) )
 	{
-		if ( usedx ) fread(&dxvert_attach[i],1,sizeof(dxvert_t),anivfile);
-		else fread(&avert_attach[i],1,sizeof(uint32_t),anivfile);
-		if ( feof(anivfile) )
-		{
-			free(dpoly_base);
-			if ( dxvert_base ) free(dxvert_base);
-			else free(avert_base);
-			free(dpoly_attach);
-			if ( dxvert_attach ) free(dxvert_attach);
-			else free(avert_attach);
-			fprintf(stderr,"Premature end of file reached at '%s':%lu\n",argv[3],ftell(anivfile));
-			fclose(anivfile);
-			return 8;
-		}
+		free(dpoly_base);
+		if ( dxvert_base ) free(dxvert_base);
+		else free(avert_base);
+		free(dpoly_attach);
+		fprintf(stderr,"Merge mode requires both models to have the same number of frames. '%s' has %u and '%s' has %u.\n",argv[1],ahead_base.numframes,argv[3],ahead_attach.numframes);
+		fclose(anivfile);
+		return 32;
 	}
-	fclose(anivfile);
-	// duplicate the vertices for as many frames as the base model has
-	for ( int i=1; i<ahead_base.numframes; i++ )
+	if ( (attachframe < 0) || (attachframe >= ahead_attach.numframes) )
 	{
-		if ( dxvert_attach ) memcpy(dxvert_attach+i*dhead_attach.numverts,dxvert_attach,dhead_attach.numverts*sizeof(dxvert_t));
-		else memcpy(avert_attach+i*dhead_attach.numverts,avert_attach,dhead_attach.numverts*sizeof(uint32_t));
+		free(dpoly_base);
+		if ( dxvert_base ) free(dxvert_base);
+		else free(avert_base);
+		free(dpoly_attach);
+		fprintf(stderr,"Specified attach frame is out of range. '%s' has frames in the range 0-%u.\n",argv[3],ahead_attach.numframes-1);
+		fclose(anivfile);
+		return 32;
 	}
-	// read transforms
-	for ( int i=5; i<argc; i++ )
+	// read frames
+	if ( nowtri )
 	{
-		if ( !strcmp(argv[i],"-p1") )
+		for ( int i=0; i<(dhead_attach.numverts*ahead_attach.numframes); i++ )
 		{
-			if ( argc < i+3 ) break;
-			sscanf(argv[++i],"%f",&basetform.ofsX);
-			sscanf(argv[++i],"%f",&basetform.ofsY);
-			sscanf(argv[++i],"%f",&basetform.ofsZ);
+			if ( usedx ) fread(&dxvert_attach[i],1,sizeof(dxvert_t),anivfile);
+			else fread(&avert_attach[i],1,sizeof(uint32_t),anivfile);
+			if ( feof(anivfile) )
+			{
+				free(dpoly_base);
+				if ( dxvert_base ) free(dxvert_base);
+				else free(avert_base);
+				free(dpoly_attach);
+				if ( dxvert_attach ) free(dxvert_attach);
+				else free(avert_attach);
+				fprintf(stderr,"Premature end of file reached at '%s':%lu\n",argv[3],ftell(anivfile));
+				fclose(anivfile);
+				return 8;
+			}
 		}
-		else if ( !strcmp(argv[i],"-p2") )
+		fclose(anivfile);
+	}
+	else
+	{
+		if ( usedx ) fseek(anivfile,dhead_attach.numverts*attachframe*sizeof(dxvert_t),SEEK_CUR);
+		else fseek(anivfile,dhead_attach.numverts*attachframe*sizeof(uint32_t),SEEK_CUR);
+		for ( int i=0; i<dhead_attach.numverts; i++ )
 		{
-			if ( argc < i+3 ) break;
-			sscanf(argv[++i],"%f",&attachtform.ofsX);
-			sscanf(argv[++i],"%f",&attachtform.ofsY);
-			sscanf(argv[++i],"%f",&attachtform.ofsZ);
+			if ( usedx ) fread(&dxvert_attach[i],1,sizeof(dxvert_t),anivfile);
+			else fread(&avert_attach[i],1,sizeof(uint32_t),anivfile);
+			if ( feof(anivfile) )
+			{
+				free(dpoly_base);
+				if ( dxvert_base ) free(dxvert_base);
+				else free(avert_base);
+				free(dpoly_attach);
+				if ( dxvert_attach ) free(dxvert_attach);
+				else free(avert_attach);
+				fprintf(stderr,"Premature end of file reached at '%s':%lu\n",argv[3],ftell(anivfile));
+				fclose(anivfile);
+				return 8;
+			}
 		}
-		else if ( !strcmp(argv[i],"-f1") ) basetform.unmirror = 1;
-		else if ( !strcmp(argv[i],"-f2") ) attachtform.unmirror = 1;
-		else if ( !strcmp(argv[i],"-r1") )
+		fclose(anivfile);
+		// duplicate the vertices for as many frames as the base model has
+		for ( int i=1; i<ahead_base.numframes; i++ )
 		{
-			if ( argc < i+3 ) break;
-			sscanf(argv[++i],"%hhd",&basetform.pitch);
-			sscanf(argv[++i],"%hhd",&basetform.yaw);
-			sscanf(argv[++i],"%hhd",&basetform.roll);
+			if ( dxvert_attach ) memcpy(dxvert_attach+i*dhead_attach.numverts,dxvert_attach,dhead_attach.numverts*sizeof(dxvert_t));
+			else memcpy(avert_attach+i*dhead_attach.numverts,avert_attach,dhead_attach.numverts*sizeof(uint32_t));
 		}
-		else if ( !strcmp(argv[i],"-r2") )
-		{
-			if ( argc < i+3 ) break;
-			sscanf(argv[++i],"%hhd",&attachtform.pitch);
-			sscanf(argv[++i],"%hhd",&attachtform.yaw);
-			sscanf(argv[++i],"%hhd",&attachtform.roll);
-		}
-		else if ( !strcmp(argv[i],"-s1") )
-		{
-			if ( argc < i+3 ) break;
-			sscanf(argv[++i],"%f",&basetform.scaleX);
-			sscanf(argv[++i],"%f",&basetform.scaleY);
-			sscanf(argv[++i],"%f",&basetform.scaleZ);
-		}
-		else if ( !strcmp(argv[i],"-s2") )
-		{
-			if ( argc < i+3 ) break;
-			sscanf(argv[++i],"%f",&attachtform.scaleX);
-			sscanf(argv[++i],"%f",&attachtform.scaleY);
-			sscanf(argv[++i],"%f",&attachtform.scaleZ);
-		}
-		else if ( !strcmp(argv[i],"-s3") )
-		{
-			if ( argc < i+3 ) break;
-			sscanf(argv[++i],"%f",&scaleOutX);
-			sscanf(argv[++i],"%f",&scaleOutY);
-			sscanf(argv[++i],"%f",&scaleOutZ);
-		}
-		else if ( !strcmp(argv[i],"-attachonly") ) attachonly = 1;
 	}
 	// change triangle winding when mirroring
 	if ( basetform.unmirror )
@@ -570,40 +624,43 @@ int main( int argc, char **argv )
 		}
 		transform(&attachv[i],&attachtform);
 	}
-	// transform attachment vertices (pass 2)
-	for ( int i=0; i<ahead_base.numframes; i++ )
+	if ( !nowtri )
 	{
-		int va = dpoly_base[tri_index].vertices[0]+i*dhead_base.numverts;
-		int vb = dpoly_base[tri_index].vertices[1]+i*dhead_base.numverts;
-		int vc = dpoly_base[tri_index].vertices[2]+i*dhead_base.numverts;
-		// origin is midpoint between vertices 0 and 1
-		tri_pos.x = (basev[va].x+basev[vb].x)/2.;
-		tri_pos.y = (basev[va].y+basev[vb].y)/2.;
-		tri_pos.z = (basev[va].z+basev[vb].z)/2.;
-		// Z is normalized vector from 0 to 1
-		tri_Z.x = basev[va].x-basev[vb].x;
-		tri_Z.y = basev[va].y-basev[vb].y;
-		tri_Z.z = basev[va].z-basev[vb].z;
-		normalize(&tri_Z);
-		// Y is normal of triangle
-		vector_t ac, ab;
-		ac.x = basev[vc].x-basev[va].x;
-		ac.y = basev[vc].y-basev[va].y;
-		ac.z = basev[vc].z-basev[va].z;
-		ab.x = basev[vb].x-basev[va].x;
-		ab.y = basev[vb].y-basev[va].y;
-		ab.z = basev[vb].z-basev[va].z;
-		normalize(&ac);
-		normalize(&ab);
-		tri_Y.x = ac.y*ab.z-ac.z*ab.y;
-		tri_Y.y = ac.z*ab.x-ac.x*ab.z;
-		tri_Y.z = ac.x*ab.y-ac.y*ab.x;
-		// X is cross product of both
-		tri_X.x = tri_Y.y*tri_Z.z-tri_Y.z*tri_Z.y;
-		tri_X.y = tri_Y.z*tri_Z.x-tri_Y.x*tri_Z.z;
-		tri_X.z = tri_Y.x*tri_Z.y-tri_Y.y*tri_Z.x;
-		for ( int j=0; j<dhead_attach.numverts; j++ )
-			transformbywtri(&attachv[j+i*dhead_attach.numverts]);
+		// transform attachment vertices (pass 2)
+		for ( int i=0; i<ahead_base.numframes; i++ )
+		{
+			int va = dpoly_base[tri_index].vertices[0]+i*dhead_base.numverts;
+			int vb = dpoly_base[tri_index].vertices[1]+i*dhead_base.numverts;
+			int vc = dpoly_base[tri_index].vertices[2]+i*dhead_base.numverts;
+			// origin is midpoint between vertices 0 and 1
+			tri_pos.x = (basev[va].x+basev[vb].x)/2.;
+			tri_pos.y = (basev[va].y+basev[vb].y)/2.;
+			tri_pos.z = (basev[va].z+basev[vb].z)/2.;
+			// Z is normalized vector from 0 to 1
+			tri_Z.x = basev[va].x-basev[vb].x;
+			tri_Z.y = basev[va].y-basev[vb].y;
+			tri_Z.z = basev[va].z-basev[vb].z;
+			normalize(&tri_Z);
+			// Y is normal of triangle
+			vector_t ac, ab;
+			ac.x = basev[vc].x-basev[va].x;
+			ac.y = basev[vc].y-basev[va].y;
+			ac.z = basev[vc].z-basev[va].z;
+			ab.x = basev[vb].x-basev[va].x;
+			ab.y = basev[vb].y-basev[va].y;
+			ab.z = basev[vb].z-basev[va].z;
+			normalize(&ac);
+			normalize(&ab);
+			tri_Y.x = ac.y*ab.z-ac.z*ab.y;
+			tri_Y.y = ac.z*ab.x-ac.x*ab.z;
+			tri_Y.z = ac.x*ab.y-ac.y*ab.x;
+			// X is cross product of both
+			tri_X.x = tri_Y.y*tri_Z.z-tri_Y.z*tri_Z.y;
+			tri_X.y = tri_Y.z*tri_Z.x-tri_Y.x*tri_Z.z;
+			tri_X.z = tri_Y.x*tri_Z.y-tri_Y.y*tri_Z.x;
+			for ( int j=0; j<dhead_attach.numverts; j++ )
+				transformbywtri(&attachv[j+i*dhead_attach.numverts]);
+		}
 	}
 	// detransform all vertices for final model
 	if ( basetform.unmirror )
@@ -678,7 +735,8 @@ int main( int argc, char **argv )
 	}
 	else
 	{
-		dhead_out.numpolys = dhead_base.numpolys+dhead_attach.numpolys-1;	// exclude weapon triangle
+		dhead_out.numpolys = dhead_base.numpolys+dhead_attach.numpolys;
+		if ( tri_index != -1 ) dhead_out.numpolys--;
 		dhead_out.numverts = dhead_base.numverts+dhead_attach.numverts;
 	}
 	dpoly_out = calloc(dhead_out.numpolys,sizeof(datapoly_t));
@@ -687,7 +745,7 @@ int main( int argc, char **argv )
 	{
 		for ( int i=0; i<dhead_base.numpolys; i++ )
 		{
-			if ( dpoly_base[i].type&8 ) continue;
+			if ( !nowtri && (dpoly_base[i].type&8) ) continue;
 			memcpy(dpoly_out+j,dpoly_base+i,sizeof(datapoly_t));
 			j++;
 		}

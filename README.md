@@ -10,13 +10,9 @@ format.
   in the datafile (indices will be remapped).
 - **dxconv** : Converts anivfile back and forth between the original packed
   XY11Z10 and the Deus Ex padded XYZ16 vertex formats.
-- **vertdup** : [TODO] Lists groups of vertices that are identical.
-  (same position in all frames, optionally also same uvs in all referenced
-  triangles and same texture numbers)
-- **vertdedup** : [TODO] Merges identical vertices. Note that this may cause
-  undesired results. vertmerge is available as a manual alternative.
-- **vertmerge** : [TODO] Merges all specified vertices together as long as they
-  have the same position in all frames.
+- **vertdedup** : Merges identical vertices. Note that this may cause undesired
+  results. [TODO] Allow specifying ranges of vertices to isolate the merging
+  among.
 - **umeshview** : Small SDL2 program for displaying models. WASD for movement,
   Q and E to move up and down, arrow keys for rotation, page up and page down
   to roll, home to reset animation parameters, end to reset camera parameters.
@@ -28,7 +24,7 @@ format.
   give the best result. Textures can be loaded and assigned from the command
   line too, with a variety of supported formats, including PCX files directly
   exported from UnrealEd. Requires SDL2 (obviously), OpenGL (also obviously),
-  libepoxy and SDL2_image. [TODO] setting loop points, wireframe rendering,
+  libepoxy and SDL2_image. [TODO] Setting loop points, wireframe rendering,
   normals rendering, brightmap loading, bounding box display, support for
   procedural textures (a tool to export these will be made eventually, but it
   won't be part of this repository).
@@ -48,12 +44,10 @@ format.
   texture indices don't start at zero, or there are "jumps" between used
   indices). This tool remaps all texture indices to the lowest unused index,
   effectively "squashing" them together and removing gaps.
-- **polymangler** : [TODO] A tool that replicates the "mangling" Umodel does on
-  mesh export, where it effectively ignores LodMesh materials and instead comes
-  up with its own indices. Included for backwards compatibility with stuff that
-  expects this sort of nonsense.
 - **umesh2obj** : Creates .obj files for each frame of a mesh.
-- **attacher** : Attaches one mesh to the weapon triangle of another.
+- **attacher** : Attaches one mesh to the weapon triangle of another. Or
+  alternatively, merges two meshes together provided they have the same number
+  of frames.
 - **unmirror** : Flips the model on the X axis, for models that are usually
   imported with the UNMIRROR flag in UE1 (e.g.: player models).
 - **polyflip** : Flips a specified set of polys in one datafile (by swapping
@@ -67,4 +61,4 @@ format.
 - **vertsquish** : Shrinks a range of vertices into their midpoint within a
   range of frames. This is used as a cheap way to hide geometry, and exists
   solely because I needed to do a cheap edit on just one model, but I'm putting
-  it here anyway.
+  it here anyway. Can also be used to cover a hole between vertices.

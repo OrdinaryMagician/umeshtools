@@ -149,7 +149,7 @@ int32_t readimport( void )
 {
 	readindex();
 	readindex();
-	if ( head->pkgver >= 60 ) fpos += 4;
+	if ( head->pkgver >= 55 ) fpos += 4;
 	else readindex();
 	return readindex();
 }
@@ -170,7 +170,7 @@ void readimport2( int32_t *cpkg, int32_t *cname, int32_t *pkg, int32_t *name )
 {
 	*cpkg = readindex();
 	*cname = readindex();
-	if ( head->pkgver >= 60 ) *pkg = readdword();
+	if ( head->pkgver >= 55 ) *pkg = readdword();
 	else *pkg = readindex();
 	*name = readindex();
 }
@@ -190,7 +190,7 @@ void readexport( int32_t *class, int32_t *ofs, int32_t *siz, int32_t *name )
 {
 	*class = readindex();
 	readindex();
-	if ( head->pkgver >= 60 ) fpos += 4;
+	if ( head->pkgver >= 55 ) fpos += 4;
 	*name = readindex();
 	fpos += 4;
 	*siz = readindex();
@@ -213,8 +213,8 @@ void readexport2( int32_t *class, int32_t *super, int32_t *pkg, int32_t *name,
 {
 	*class = readindex();
 	*super = readindex();
-	if ( head->pkgver >= 60 ) *pkg = readdword();
-	else *pkg = readindex();
+	if ( head->pkgver >= 55 ) *pkg = readdword();
+	else *pkg = 0;
 	*name = readindex();
 	*flags = readdword();
 	*siz = readindex();
@@ -405,6 +405,7 @@ int16_t unpackuvert( uint32_t v, int c )
 }
 
 // mesh-relevant poly flags
+#define PF_INVISIBLE   0x01
 #define PF_MASKED      0x02
 #define PF_TRANSLUCENT 0x04
 #define PF_ENVIRONMENT 0x10
@@ -422,7 +423,8 @@ uint8_t typefromflags( uint32_t flags )
 	else if ( flags&PF_MASKED ) out = 3;
 	else if ( flags&PF_TRANSLUCENT ) out = 2;
 	else if ( flags&PF_TWOSIDED ) out = 1;
-	if ( flags&PF_SPECIALPOLY ) out |= 0x08;
+	// old packages use PF_INVISIBLE for the weapon triangle
+	if ( flags&(PF_INVISIBLE|PF_SPECIALPOLY) ) out |= 0x08;
 	if ( flags&PF_UNLIT ) out |= 0x10;
 	if ( flags&PF_FLAT ) out |= 0x20;
 	if ( flags&PF_ENVIRONMENT ) out |= 0x40;
@@ -1213,8 +1215,12 @@ int main( int argc, char **argv )
 		// begin reading data
 		size_t prev = fpos;
 		fpos = ofs;
-		if ( head->pkgver < 40 ) fpos += 4;
-		if ( head->pkgver < 60 ) fpos += 16;
+		if ( head->pkgver < 45 ) fpos += 4;
+		if ( head->pkgver < 55 ) fpos += 16;
+		if ( head->pkgver <= 44 ) fpos -= 6;	// ???
+		if ( head->pkgver == 45 ) fpos -= 2;	// ???
+		if ( head->pkgver == 41 ) fpos += 2;	// ???
+		if ( head->pkgver <= 35 ) fpos += 8;	// ???
 		int32_t prop = readindex();
 		if ( (uint32_t)prop >= head->nnames )
 		{
@@ -1227,6 +1233,8 @@ retry:
 		if ( strncasecmp(pname,"none",l) )
 		{
 			uint8_t info = readbyte();
+			//int array = info&0x80;
+			//int type = info&0xf;
 			int psiz = (info>>4)&0x7;
 			switch ( psiz )
 			{
@@ -1255,8 +1263,20 @@ retry:
 				psiz = readdword();
 				break;
 			}
+			/*printf(" prop %.*s (%u, %u, %u, %u)\n",l,pname,array,type,(info>>4)&7,psiz);
+			if ( array && (type != 3) )
+			{
+				int idx = readindex();
+				printf(" index: %d\n",idx);
+			}
+			if ( type == 10 )
+			{
+				int32_t tl, sn;
+				sn = readindex();
+				char *sname = (char*)(pkgfile+getname(sn,&tl));
+				printf(" struct: %.*s\n",tl,sname);
+			}*/
 			fpos += psiz;
-			printf(" Skipping property %.*s\n",l,pname);
 			prop = readindex();
 			pname = (char*)(pkgfile+getname(prop,&l));
 			goto retry;

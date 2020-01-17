@@ -30,24 +30,42 @@ typedef struct
 // such as the health vials in UT
 int inverse = 0;
 
+#define PT_NORMAL        0
+#define PT_TWOSIDED      1
+#define PT_TRANSLUCENT   2
+#define PT_MASKED        3
+#define PT_MODULATED     4
+#define PT_227ALPHABLEND 5
+#define PT_UNUSED1       6
+#define PT_UNUSED2       7
+#define PT_MASK          0x07
+#define PF_SPECIALTRI    0x08
+#define PF_UNLIT         0x10
+#define PF_CURVY         0x20
+#define PF_227FLATSHADED 0x20
+#define PF_MESHENVIROMAP 0x40
+#define PF_NOSMOOTH      0x80
+#define PF_MASK          0xF8
+
 int polysort( const void *a, const void *b )
 {
 	const datapoly_t *pa = a, *pb = b;
 	// check if weapon triangle
 	// this one always goes first
-	if ( pa->type&8 && !(pb->type&8) )
+	if ( pa->type&PF_SPECIALTRI && !(pb->type&PF_SPECIALTRI) )
 		return -1;
-	if ( !(pa->type&8) && pb->type&8 )
+	if ( !(pa->type&PF_SPECIALTRI) && pb->type&PF_SPECIALTRI )
 		return 1;
 	// compare texture number
 	if ( pa->texnum != pb->texnum )
 		return inverse?(pb->texnum-pa->texnum):(pa->texnum-pb->texnum);
+	int ord[8] = {0,1,3,4,5,2,6,7};
 	// compare render style
-	if ( (pa->type&7) != (pb->type&7) )
-		return ((pa->type&7)-(pb->type&7));
+	if ( (pa->type&PT_MASK) != (pb->type&PT_MASK) )
+		return (ord[(pa->type&PT_MASK)]-ord[(pb->type&PT_MASK)]);
 	// compare other render flags
-	if ( (pa->type&15) != (pb->type&15) )
-		return ((pa->type&15)-(pb->type&15));
+	if ( (pa->type&PF_MASK) != (pb->type&PF_MASK) )
+		return ((pa->type&PF_MASK)-(pb->type&PF_MASK));
 	// compare vertex indices
 	for ( int i=0; i<3; i++ )
 	{

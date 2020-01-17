@@ -1,6 +1,7 @@
 #include <epoxy/gl.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
+#include <png.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,6 +67,23 @@ int16_t unpackuvert( uint32_t v, int c )
 	}
 }
 
+#define PT_NORMAL        0
+#define PT_TWOSIDED      1
+#define PT_TRANSLUCENT   2
+#define PT_MASKED        3
+#define PT_MODULATED     4
+#define PT_227ALPHABLEND 5
+#define PT_UNUSED1       6
+#define PT_UNUSED2       7
+#define PT_MASK          0x07
+#define PF_SPECIALTRI    0x08
+#define PF_UNLIT         0x10
+#define PF_CURVY         0x20
+#define PF_227FLATSHADED 0x20
+#define PF_MESHENVIROMAP 0x40
+#define PF_NOSMOOTH      0x80
+#define PF_MASK          0xF8
+
 const char *vsrc =
 "#version 430\n"
 "\n"
@@ -75,44 +93,63 @@ const char *vsrc =
 "layout(location=3) in vec3 vPosition2;\n"
 "layout(location=4) in vec3 vNormal2;\n"
 "\n"
+"out vec3 fVertex;\n"
 "out vec3 fNormal;\n"
 "out vec2 fCoord;\n"
+"out vec3 fLight;\n"
+"out vec2 eNormal;\n"
 "\n"
-"uniform mat4 MVP;\n"
+"uniform mat4 MP;\n"
 "uniform mat4 MV;\n"
 "uniform float Interpolation;\n"
 "uniform bool MeshEnviroMap;\n"
 "\n"
 "void main()\n"
 "{\n"
-"\tgl_Position.xyz = (1.0-Interpolation)*vPosition+Interpolation*vPosition2;\n"
-"\tgl_Position.w = 1.0;\n"
-"\tgl_Position = MVP*gl_Position;\n"
-"\tfNormal = (1.0-Interpolation)*vNormal+Interpolation*vNormal2;\n"
+"\tgl_Position.xyz = (1.-Interpolation)*vPosition+Interpolation*vPosition2;\n"
+"\tgl_Position.w = 1.;\n"
+"\tfVertex = (MV*gl_Position).xyz;\n"
+"\tgl_Position = MP*MV*gl_Position;\n"
+"\tfNormal = (1.-Interpolation)*vNormal+Interpolation*vNormal2;\n"
+"\teNormal = normalize(MP*MV*vec4(fNormal,0.)).xy;\n"
 "\tif ( MeshEnviroMap )\n"
-"\t\tfCoord = fNormal.xz*0.5;\n"
-"\t\telse\n"
-"\tfCoord = vCoord;\n"
-"\tfNormal = (MV*vec4(fNormal,0.0)).xyz;\n"
+"\t\tfCoord = fNormal.xz*.5+.5;\n"
+"\telse\n"
+"\t\tfCoord = vCoord;\n"
+"\tfNormal = normalize(MV*vec4(fNormal,0.)).xyz;\n"
+"\tfLight = (vec4(0.,0.,128.,0.)).xyz;\n"
 "}\n";
 const char *fsrc =
 "#version 430\n"
 "\n"
+"in vec3 fVertex;\n"
 "in vec3 fNormal;\n"
 "in vec2 fCoord;\n"
+"in vec3 fLight;\n"
+"in vec3 fEye;\n"
+"in vec2 eNormal;\n"
 "\n"
 "layout(location=0) out vec4 FragColor;\n"
 "layout(binding=0) uniform sampler2D Texture;\n"
+"layout(binding=1) uniform sampler2D Brightmap;\n"
+"layout(binding=2) uniform sampler2D EnvMask;\n"
+"layout(binding=3) uniform sampler2D EnvMap;\n"
 "uniform bool Masked;\n"
 "uniform bool Unlit;\n"
+"uniform bool SWWMEnviroMap;\n"
 "\n"
 "void main()\n"
 "{\n"
-"\tvec4 res = texture2D(Texture,fCoord);\n"
-"\tif ( Masked && (res.a < 0.5) ) discard;\n"
-"\tfloat ref = max(0.1,dot(fNormal,normalize(vec3(-0.5,0.5,1.0))));\n"
-"\tif ( !Unlit ) res.rgb *= ref;\n"
-"\tFragColor = res;\n"
+"\tvec4 res = texture2D(Texture,SWWMEnviroMap?(eNormal*vec2(.49,-.49)+vec2(.5)):fCoord);\n"
+"\tif ( Masked && (res.a < .5) ) discard;\n"
+"\tvec3 light = normalize(fLight-fVertex);\n"
+"\tvec3 ref = normalize(-reflect(light,fNormal));\n"
+"\tvec3 amb = vec3(.25);\n"
+"\tvec3 diff = vec3(1.)*max(dot(fNormal,light),0.);\n"
+"\tdiff = mix(diff,vec3(1.),texture2D(Brightmap,fCoord).x);\n"
+"\tif ( !Unlit ) res.rgb *= amb+diff;\n"
+"\tres.rgb += texture2D(EnvMap,eNormal*vec2(.49,-.49)+vec2(.5)).rgb*texture2D(EnvMask,fCoord).x;\n"
+"\tFragColor = vec4(res.rgb,1.);\n"
 "}\n";
 const char *uvsrc =
 "#version 430\n"
@@ -125,8 +162,8 @@ const char *uvsrc =
 "\n"
 "void main()\n"
 "{\n"
-"\tgl_Position.xyz = (1.0-Interpolation)*vPosition+Interpolation*vPosition2;\n"
-"\tgl_Position.w = 1.0;\n"
+"\tgl_Position.xyz = (1.-Interpolation)*vPosition+Interpolation*vPosition2;\n"
+"\tgl_Position.w = 1.;\n"
 "\tgl_Position = MVP*gl_Position;\n"
 "}\n";
 const char *ufsrc =
@@ -136,7 +173,7 @@ const char *ufsrc =
 "\n"
 "void main()\n"
 "{\n"
-"\tFragColor = vec4(1.0,1.0,0.0,1.0);\n"
+"\tFragColor = vec4(1.,1.,0.,1.);\n"
 "}\n";
 const char *wvsrc =
 "#version 430\n"
@@ -152,8 +189,8 @@ const char *wvsrc =
 "\n"
 "void main()\n"
 "{\n"
-"\tgl_Position.xyz = (1.0-Interpolation)*vPosition+Interpolation*vPosition2;\n"
-"\tgl_Position.w = 1.0;\n"
+"\tgl_Position.xyz = (1.-Interpolation)*vPosition+Interpolation*vPosition2;\n"
+"\tgl_Position.w = 1.;\n"
 "\tgl_Position = MVP*gl_Position;\n"
 "\tfColor = vColor;\n"
 "}\n";
@@ -166,13 +203,22 @@ const char *wfsrc =
 "\n"
 "void main()\n"
 "{\n"
-"\tFragColor = vec4(fColor,1.0);\n"
+"\tFragColor = vec4(fColor,1.);\n"
 "}\n";
 
 GLint mprog, uprog, wprog;
 GLuint vao, vbuf, ubuf, wbuf;
-GLuint tex[9] = {0};
-GLuint vmid, vmid2, viid, vtid, umid, uiid, venvid, vmskid, vunlid, wmid, wiid;
+GLuint btex = 0;
+GLuint tex[256] = {0};
+GLuint bmap[256] = {0};
+GLuint emask[256] = {0};
+GLuint emap[256] = {0};
+int hide[256] = {0};
+GLuint vmid, vmid2, viid, vtid, umid, uiid, venvid, vmskid, vunlid, vsenvid,
+	wmid, wiid;
+float bgcol[3] = {.5f,.5f,.5f};
+int nosmooth = 0;
+int swwmenviro = 0;
 
 typedef struct
 {
@@ -185,13 +231,13 @@ typedef struct
 typedef struct
 {
 	int v[3];
-	vect_t n;
+	vect_t *n;
 	float uv[3][2];
 	int type, texn;
 } tri_t;
 typedef struct
 {
-	tri_t *tris;
+	tri_t **tris;
 	int ntri;
 	int type, texn;
 } group_t;
@@ -339,20 +385,29 @@ void prepare_vbuf( void )
 		{
 			for ( int l=0; l<3; l++ )
 			{
-				vboe[m].p[0] = verts[groups[j].tris[k].v[l]
+				vboe[m].p[0] = verts[groups[j].tris[k]->v[l]
 					+i*nvert].x;
-				vboe[m].p[1] = verts[groups[j].tris[k].v[l]
+				vboe[m].p[1] = verts[groups[j].tris[k]->v[l]
 					+i*nvert].y;
-				vboe[m].p[2] = verts[groups[j].tris[k].v[l]
+				vboe[m].p[2] = verts[groups[j].tris[k]->v[l]
 					+i*nvert].z;
-				vboe[m].n[0] = norms[groups[j].tris[k].v[l]
-					+i*nvert].x;
-				vboe[m].n[1] = norms[groups[j].tris[k].v[l]
-					+i*nvert].y;
-				vboe[m].n[2] = norms[groups[j].tris[k].v[l]
-					+i*nvert].z;
-				vboe[m].c[0] = groups[j].tris[k].uv[l][0];
-				vboe[m].c[1] = groups[j].tris[k].uv[l][1];
+				if ( groups[j].type&PF_227FLATSHADED )
+				{
+					vboe[m].n[0] = groups[j].tris[k]->n[i].x;
+					vboe[m].n[1] = groups[j].tris[k]->n[i].y;
+					vboe[m].n[2] = groups[j].tris[k]->n[i].z;
+				}
+				else
+				{
+					vboe[m].n[0] = norms[groups[j].tris[k]
+						->v[l]+i*nvert].x;
+					vboe[m].n[1] = norms[groups[j].tris[k]
+						->v[l]+i*nvert].y;
+					vboe[m].n[2] = norms[groups[j].tris[k]
+						->v[l]+i*nvert].z;
+				}
+				vboe[m].c[0] = groups[j].tris[k]->uv[l][0];
+				vboe[m].c[1] = groups[j].tris[k]->uv[l][1];
 				m++;
 			}
 		}
@@ -466,8 +521,8 @@ void rendermesh( void )
 	glDepthMask(GL_TRUE);
 	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 	glUseProgram(mprog);
-	// prepare MVP matrix
-	mat_t mvp =
+	// prepare model view matrix
+	mat_t mv =
 	{
 		{{1,0,0,0},
 		{0,1,0,0},
@@ -478,15 +533,17 @@ void rendermesh( void )
 	rotate(&rotx,rotation[0],ROT_X);
 	rotate(&roty,rotation[1],ROT_Y);
 	rotate(&rotz,rotation[2],ROT_Z);
-	mmul(&mvp,mvp,rotz);
-	mmul(&mvp,mvp,roty);
-	mmul(&mvp,mvp,rotx);
-	mvp.c[3][0] += position[0];
-	mvp.c[3][1] += position[1];
-	mvp.c[3][2] += position[2];
-	glUniformMatrix4fv(vmid2,1,GL_FALSE,&mvp.c[0][0]);
-	mmul(&mvp,mvp,persp);
-	glUniformMatrix4fv(vmid,1,GL_FALSE,&mvp.c[0][0]);
+	mmul(&mv,mv,rotz);
+	mmul(&mv,mv,roty);
+	mmul(&mv,mv,rotx);
+	mv.c[3][0] += position[0];
+	mv.c[3][1] += position[1];
+	mv.c[3][2] += position[2];
+	glUniformMatrix4fv(vmid2,1,GL_FALSE,&mv.c[0][0]);
+	glUniformMatrix4fv(vmid,1,GL_FALSE,&persp.c[0][0]);
+	// full mvp matrix
+	mat_t mvp;
+	mmul(&mvp,persp,mv);
 	int framea = floorf(animframe);
 	glUniform1f(viid,animframe-framea);
 	int frameb = ceilf(animframe);
@@ -510,33 +567,79 @@ void rendermesh( void )
 	int vofs = 0;
 	for ( int i=0; i<ngroup; i++ )
 	{
-		if ( groups[i].type&8 )
+		if ( (groups[i].type&PF_SPECIALTRI) || hide[groups[i].texn] )
 		{
-			// skip drawing weapon triangle
+			// skip drawing weapon triangle / hidden parts
 			vofs += groups[i].ntri*3;
 			continue;
 		}
-		glBindTexture(GL_TEXTURE_2D,tex[groups[i].texn]);
 		glActiveTexture(GL_TEXTURE0);
-		if ( (groups[i].type&7) ) glDisable(GL_CULL_FACE);
-		else glEnable(GL_CULL_FACE);
-		glUniform1i(venvid,groups[i].type&0x40);
-		glUniform1i(vunlid,groups[i].type&0x10);
-		glUniform1i(vmskid,(groups[i].type&7)==3);
-		// set blend mode when needed
-		switch( groups[i].type&7 )
+		glBindTexture(GL_TEXTURE_2D,tex[groups[i].texn]);
+		if ( (groups[i].type&PF_NOSMOOTH) || nosmooth )
 		{
-		case 2:
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+		}
+		else
+		{
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+		}
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D,bmap[groups[i].texn]?bmap[groups[i].texn]:btex);
+		if ( (groups[i].type&PF_NOSMOOTH) || nosmooth )
+		{
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+		}
+		else
+		{
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+		}
+		glActiveTexture(GL_TEXTURE2);
+		glBindTexture(GL_TEXTURE_2D,emask[groups[i].texn]?emask[groups[i].texn]:btex);
+		if ( (groups[i].type&PF_NOSMOOTH) || nosmooth )
+		{
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+		}
+		else
+		{
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+		}
+		glActiveTexture(GL_TEXTURE3);
+		glBindTexture(GL_TEXTURE_2D,emap[groups[i].texn]?emap[groups[i].texn]:btex);
+		if ( (groups[i].type&PF_NOSMOOTH) || nosmooth )
+		{
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+		}
+		else
+		{
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+		}
+		if ( (groups[i].type&PT_MASK) ) glDisable(GL_CULL_FACE);
+		else glEnable(GL_CULL_FACE);
+		glUniform1i(vsenvid,!!(groups[i].type&PF_MESHENVIROMAP)&&swwmenviro);
+		glUniform1i(venvid,!!(groups[i].type&PF_MESHENVIROMAP));
+		glUniform1i(vunlid,!!(groups[i].type&PF_UNLIT));
+		glUniform1i(vmskid,(groups[i].type&PT_MASK)==PT_MASKED);
+		// set blend mode when needed
+		switch( groups[i].type&PT_MASK )
+		{
+		case PT_TRANSLUCENT:
 			// additive
-			glBlendFunc(GL_ONE,GL_ONE);
+			glBlendFunc(GL_ONE,GL_ONE_MINUS_SRC_COLOR);
 			glDepthMask(GL_FALSE);
 			break;
-// not properly implemented
-//		case 4:
-//			// modulated
-//			glBlendFunc(GL_DST_COLOR,GL_ZERO);
-//			glDepthMask(GL_FALSE);
-//			break;
+		case PT_MODULATED:
+			// modulated
+			glBlendFunc(GL_DST_COLOR,GL_SRC_COLOR);
+			glDepthMask(GL_FALSE);
+			break;
 		default:
 			glBlendFunc(GL_ONE,GL_ZERO);
 			glDepthMask(GL_TRUE);
@@ -698,12 +801,12 @@ void transform( vect_t *v, transform_t *t )
 }
 
 // compare groups by render style
-// sort order: normal->twosided->translucent->masked->modulated
-// order is exactly as they are defined, so we can simply subtract them
+// sort order: normal->twosided->blended->masked->translucent->modulated
 int matcmp( const void *a, const void *b )
 {
-	int sa = ((const group_t*)a)->type&0x7,
-		sb = ((const group_t*)b)->type&0x7;
+	int ord[8] = {0,1,3,4,5,2,6,7};
+	int sa = ord[((const group_t*)a)->type&PT_MASK],
+		sb = ord[((const group_t*)b)->type&PT_MASK];
 	return sa-sb;
 }
 
@@ -784,8 +887,9 @@ int mesh_load( const char *aniv, const char *data )
 			tris[i].uv[2][0] = dpoly[i].uv[2][0]/255.f;
 			tris[i].uv[2][1] = dpoly[i].uv[2][1]/255.f;
 		}
-		int texn = dpoly[i].texnum;
-		int type = dpoly[i].type;
+		int texn = tris[i].texn = dpoly[i].texnum;
+		int type = tris[i].type = dpoly[i].type;
+		tris[i].n = 0;
 group_recheck:
 		if ( c == -1 )
 		{
@@ -810,8 +914,8 @@ group_recheck:
 			}
 			goto group_recheck;
 		}
-		groups[c].tris = realloc(groups[c].tris,sizeof(tri_t)*ntri+1);
-		groups[c].tris[groups[c].ntri++] = tris[i];
+		groups[c].tris = realloc(groups[c].tris,sizeof(tri_t*)*ntri+1);
+		groups[c].tris[groups[c].ntri++] = &tris[i];
 	}
 	free(dpoly);
 	// sort groups by render styles
@@ -922,7 +1026,9 @@ group_recheck:
 				verts[tris[j].v[0]+vs]);
 			cross(&norm,dir[0],dir[1]);
 			normalize(&norm);
-			tris[j].n = norm;
+			if ( !tris[j].n ) tris[j].n = calloc(ahead.numframes,
+				sizeof(vect_t));
+			tris[j].n[i] = norm;
 		}
 		// compute vertex normals
 		for ( int j=0; j<dhead.numverts; j++ )
@@ -935,7 +1041,7 @@ group_recheck:
 					&& (tris[k].v[1] != j)
 					&& (tris[k].v[2] != j) )
 					continue;
-				vadd(&nsum,nsum,tris[k].n);
+				vadd(&nsum,nsum,tris[k].n[i]);
 				t++;
 			}
 			vscale(&nsum,nsum,1.f/t);
@@ -949,17 +1055,16 @@ group_recheck:
 	return 0;
 }
 
-void tex_load( unsigned n, const char *filename )
+void tex_load( unsigned n, const char *filename, GLuint *dest )
 {
-	if ( n >= 9 ) return;
 	SDL_Surface *tx = IMG_Load(filename);
 	if ( !tx ) return;
 	// set first index to translucent
 	if ( tx->format->palette ) tx->format->palette->colors[0].a = 0;
 	SDL_Surface *txconv = SDL_ConvertSurfaceFormat(tx,
 		SDL_PIXELFORMAT_RGBA32,0);
-	glGenTextures(1,&tex[n]);
-	glBindTexture(GL_TEXTURE_2D,tex[n]);
+	glGenTextures(1,&dest[n]);
+	glBindTexture(GL_TEXTURE_2D,dest[n]);
 	glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,txconv->w,txconv->h,0,GL_RGBA,
 		GL_UNSIGNED_BYTE,txconv->pixels);
 	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
@@ -968,7 +1073,46 @@ void tex_load( unsigned n, const char *filename )
 	SDL_FreeSurface(tx);
 }
 
-int inputs[21] = {0};
+int inputs[22] = {0};
+
+int writepng( const char *filename, unsigned char *fdata, int fw, int fh )
+{
+	if ( !filename ) return 0;
+	png_structp pngp;
+	png_infop infp;
+	FILE *pf;
+	if ( !(pf = fopen(filename,"wb")) ) return 0;
+	pngp = png_create_write_struct(PNG_LIBPNG_VER_STRING,0,0,0);
+	if ( !pngp )
+	{
+		fclose(pf);
+		return 0;
+	}
+	infp = png_create_info_struct(pngp);
+	if ( !infp )
+	{
+		fclose(pf);
+		png_destroy_write_struct(&pngp,0);
+		return 0;
+	}
+	if ( setjmp(png_jmpbuf(pngp)) )
+	{
+		png_destroy_write_struct(&pngp,&infp);
+		fclose(pf);
+		return 0;
+	}
+	png_init_io(pngp,pf);
+	png_set_IHDR(pngp,infp,fw,fh,8,PNG_COLOR_TYPE_RGBA,
+		PNG_INTERLACE_NONE,PNG_COMPRESSION_TYPE_DEFAULT,
+		PNG_FILTER_TYPE_DEFAULT);
+	png_write_info(pngp,infp);
+	// inverted Y, thanks OpenGL
+	for ( int i=fh-1; i>=0; i-- ) png_write_row(pngp,fdata+(fw*4*i));
+	png_write_end(pngp,infp);
+	png_destroy_write_struct(&pngp,&infp);
+	fclose(pf);
+	return 1;
+}
 
 int main( int argc, char **argv )
 {
@@ -976,23 +1120,19 @@ int main( int argc, char **argv )
 	{
 		fprintf(stderr,"usage: umeshview <anivfile> <datafile>"
 			" [-f] [-p posX posY posZ] [-r pitch yaw roll]"
-			" [-s scaleX scaleY scaleZ] [-t # <texture> ...]"
-			" [-drawweapon] [-drawunref]\n");
+			" [-s scaleX scaleY scaleZ] [-t # <texture>|hide]"
+			" [-drawweapon] [-drawunref] [-bgcolor XXXXXX]"
+			" [-nosmooth] [-aasamples #] [-res #x#]"
+			" [-altenvmap] [-b # <brightmap>]"
+			" [-m # <envmask>] [-e # <envmap>]\n");
 		return 1;
 	}
-	SDL_Init(SDL_INIT_VIDEO|SDL_INIT_EVENTS);
-	IMG_Init(IMG_INIT_PNG);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,4);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3);
-	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES,4);
-	SDL_Window *win = SDL_CreateWindow("umeshview",SDL_WINDOWPOS_UNDEFINED,
-		SDL_WINDOWPOS_UNDEFINED,SCR_WIDTH,SCR_HEIGHT,
-		SDL_WINDOW_OPENGL|SDL_WINDOW_SHOWN);
-	SDL_GLContext *ctx = SDL_GL_CreateContext(win);
-	SDL_GL_SetSwapInterval(1);
-	float fh = tanf(SCR_FOV/360.f*M_PI)*SCR_ZNEAR,
-		fw = fh*(SCR_WIDTH/(float)SCR_HEIGHT);
-	frustum(&persp,-fw,fw,-fh,fh,SCR_ZNEAR,SCR_ZFAR);
+	unsigned aasamples = 8;
+	unsigned resx = SCR_WIDTH, resy = SCR_HEIGHT;
+	char* tnames[256] = {0};
+	char* bnames[256] = {0};
+	char* mnames[256] = {0};
+	char* enames[256] = {0};
 	if ( argc > 3 )
 	{
 		for ( int i=3; i<argc; i++ )
@@ -1028,19 +1168,113 @@ int main( int argc, char **argv )
 				if ( argc < i+2  ) continue;
 				unsigned n = 0;
 				sscanf(argv[++i],"%u",&n);
-				tex_load(n,argv[++i]);
+				char *tn = argv[++i];
+				if ( !strcmp(tn,"hide") ) hide[n] = 1;
+				else tnames[n] = tn;
+			}
+			else if ( !strcmp(argv[i],"-b") )
+			{
+				if ( argc < i+2  ) continue;
+				unsigned n = 0;
+				sscanf(argv[++i],"%u",&n);
+				char *tn = argv[++i];
+				bnames[n] = tn;
+			}
+			else if ( !strcmp(argv[i],"-m") )
+			{
+				if ( argc < i+2  ) continue;
+				unsigned n = 0;
+				sscanf(argv[++i],"%u",&n);
+				char *tn = argv[++i];
+				mnames[n] = tn;
+			}
+			else if ( !strcmp(argv[i],"-e") )
+			{
+				if ( argc < i+2  ) continue;
+				unsigned n = 0;
+				sscanf(argv[++i],"%u",&n);
+				char *tn = argv[++i];
+				enames[n] = tn;
+			}
+			else if ( !strcmp(argv[i],"-bgcolor") )
+			{
+				if ( argc < i+1  ) continue;
+				unsigned r = 0, g = 0, b = 0;
+				sscanf(argv[++i],"%02x%02x%02x",&r,&g,&b);
+				bgcol[0] = r/255.f;
+				bgcol[1] = g/255.f;
+				bgcol[2] = b/255.f;
+			}
+			else if ( !strcmp(argv[i],"-res") )
+			{
+				if ( argc < i+1  ) continue;
+				sscanf(argv[++i],"%ux%u",&resx,&resy);
+			}
+			else if ( !strcmp(argv[i],"-aasamples") )
+			{
+				if ( argc < i+1  ) continue;
+				sscanf(argv[++i],"%u",&aasamples);
+				if ( aasamples > 16 ) aasamples = 32;
+				else if ( aasamples > 8 ) aasamples = 16;
+				else if ( aasamples > 4 ) aasamples = 8;
+				else if ( aasamples > 2 ) aasamples = 4;
+				else if ( aasamples > 1 ) aasamples = 2;
 			}
 			else if ( !strcmp(argv[i],"-drawweapon") )
 				drawwtri = 1;
 			else if ( !strcmp(argv[i],"-drawunref") )
 				drawuvert = 1;
+			else if ( !strcmp(argv[i],"-nosmooth") )
+				nosmooth = 1;
+			else if ( !strcmp(argv[i],"-altenvmap") )
+				swwmenviro = 1;
 		}
 	}
+	SDL_Init(SDL_INIT_VIDEO|SDL_INIT_EVENTS);
+	IMG_Init(IMG_INIT_PNG);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,4);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3);
+	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES,aasamples);
+	SDL_GL_SetAttribute(SDL_GL_RED_SIZE,8);
+	SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE,8);
+	SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE,8);
+	SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE,8);
+	SDL_Window *win = SDL_CreateWindow("umeshview",SDL_WINDOWPOS_UNDEFINED,
+		SDL_WINDOWPOS_UNDEFINED,resx,resy,
+		SDL_WINDOW_OPENGL|SDL_WINDOW_SHOWN);
+	SDL_GLContext *ctx = SDL_GL_CreateContext(win);
+	SDL_GL_SetSwapInterval(1);
+	float fh = tanf(SCR_FOV/360.f*M_PI)*SCR_ZNEAR,
+		fw = fh*(resx/(float)resy);
+	frustum(&persp,-fw,fw,-fh,fh,SCR_ZNEAR,SCR_ZFAR);
 	int res = mesh_load(argv[1],argv[2]);
 	if ( res ) return res;
-	for ( int i=0; i<9; i++ )
+	/* base blank brightmap */
+	unsigned char blacktex[3] = {0,0,0};
+	glGenTextures(1,&btex);
+	glBindTexture(GL_TEXTURE_2D,btex);
+	glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,1,1,0,GL_RGB,GL_UNSIGNED_BYTE,
+		&blacktex);
+	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+	for ( int i=0; i<256; i++ )
 	{
-		if ( tex[i] ) continue;
+		int skipme = 1;
+		for ( int j=0; j<ngroup; j++ )
+		{
+			if ( groups[j].texn != i ) continue;
+			skipme = 0;
+			break;
+		}
+		if ( skipme ) continue;
+		if ( bnames[i] ) tex_load(i,bnames[i],&bmap[0]);
+		if ( mnames[i] ) tex_load(i,mnames[i],&emask[0]);
+		if ( enames[i] ) tex_load(i,enames[i],&emap[0]);
+		if ( tnames[i] )
+		{
+			tex_load(i,tnames[i],&tex[0]);
+			continue;
+		}
 		unsigned char gentex[3] = {rand()%256,rand()%256,rand()%256};
 		glGenTextures(1,&tex[i]);
 		glBindTexture(GL_TEXTURE_2D,tex[i]);
@@ -1056,10 +1290,11 @@ int main( int argc, char **argv )
 	if ( (mprog=link_shader(-1,vert,frag)) == -1 ) return 32;
 	glDeleteShader(frag);
 	glDeleteShader(vert);
-	vmid = glGetUniformLocation(mprog,"MVP");
+	vmid = glGetUniformLocation(mprog,"MP");
 	vmid2 = glGetUniformLocation(mprog,"MV");
 	viid = glGetUniformLocation(mprog,"Interpolation");
 	venvid = glGetUniformLocation(mprog,"MeshEnviroMap");
+	vsenvid = glGetUniformLocation(mprog,"SWWMEnviroMap");
 	vmskid = glGetUniformLocation(mprog,"Masked");
 	vunlid = glGetUniformLocation(mprog,"Unlit");
 	if ( (frag=compile_shader(GL_FRAGMENT_SHADER,ufsrc)) == -1 ) return 32;
@@ -1082,7 +1317,7 @@ int main( int argc, char **argv )
 	glEnable(GL_BLEND);
 	glDepthFunc(GL_LEQUAL);
 	glCullFace(GL_BACK);
-	glClearColor(0.5f,0.5f,0.5f,1.f);
+	glClearColor(bgcol[0],bgcol[1],bgcol[2],0.f);
 	glClearDepth(1.f);
 	prepare_vbuf();
 	SDL_Event e;
@@ -1137,6 +1372,8 @@ int main( int argc, char **argv )
 					inputs[18] = (e.type==SDL_KEYDOWN);
 				else if ( e.key.keysym.sym == SDLK_ESCAPE )
 					inputs[19] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_PRINTSCREEN )
+					inputs[21] = (e.type==SDL_KEYDOWN);
 				if ( e.key.keysym.mod&KMOD_LSHIFT )
 					inputs[20] = 1;
 				else inputs[20] = 0;
@@ -1193,6 +1430,25 @@ int main( int argc, char **argv )
 				animframe = nframe-1;
 		}
 		if ( inputs[19] ) active = 0;
+		if ( inputs[21] )
+		{
+			inputs[21] = 0;
+			uint8_t *tmp = malloc(resx*resy*4);
+			glReadPixels(0,0,resx,resy,GL_RGBA,GL_UNSIGNED_BYTE,tmp);
+			char fname[256] = {0};
+// fucking windows and its stupid nonsense
+#ifdef _WIN64
+			snprintf(fname,255,"%s\\umeshview%lld.png",getenv("TEMP"),time(0));
+#elif defined(_WIN32)
+			snprintf(fname,255,"%s\\umeshview%ld.png",getenv("TEMP"),time(0));
+#else
+			// does the job for me
+			snprintf(fname,255,"/tmp/umeshview%lu.png",time(0));
+#endif
+			writepng(fname,tmp,resx,resy);
+			free(tmp);
+			printf("screenshot saved\n");
+		}
 		tick = ticker();
 		rendermesh();
 		SDL_GL_SwapWindow(win);
@@ -1207,6 +1463,7 @@ int main( int argc, char **argv )
 	}
 	free(verts);
 	free(norms);
+	for ( int i=0; i<ntri; i++ ) free(tris[i].n);
 	free(tris);
 	for ( int i=0; i<ngroup; i++ ) free(groups[i].tris);
 	free(groups);

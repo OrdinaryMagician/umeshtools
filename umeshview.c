@@ -205,10 +205,35 @@ const char *wfsrc =
 "{\n"
 "\tFragColor = vec4(fColor,1.);\n"
 "}\n";
+const char *tvsrc =
+"#version 430\n"
+"\n"
+"layout(location=0) in vec2 vPosition;\n"
+"\n"
+"out vec2 fCoord;\n"
+"\n"
+"void main()\n"
+"{\n"
+"\tgl_Position = vec4(vPosition.x,vPosition.y,0.,1.);\n"
+"\tfCoord = vPosition*vec2(.5,-.5)+vec2(.5);\n"
+"}\n";
+const char *tfsrc =
+"#version 430\n"
+"\n"
+"layout(location=0) out vec4 FragColor;\n"
+"layout(binding=0) uniform sampler2D Texture;\n"
+"\n"
+"in vec2 fCoord;\n"
+"void main()\n"
+"{\n"
+"\tvec4 res = texture2D(Texture,fCoord);\n"
+"\tif ( res.a < 1. ) discard;\n"
+"\tFragColor = res;\n"
+"}\n";
 
-GLint mprog, uprog, wprog;
-GLuint vao, vbuf, ubuf, wbuf;
-GLuint btex = 0;
+GLint mprog, uprog, wprog, tprog;
+GLuint vao, vbuf, ubuf, wbuf, tbuf = 0;
+GLuint btex = 0, ttex = 0;
 GLuint tex[256] = {0};
 GLuint bmap[256] = {0};
 GLuint emask[256] = {0};
@@ -219,6 +244,9 @@ GLuint vmid, vmid2, viid, vtid, umid, uiid, venvid, vmskid, vunlid, vsenvid,
 float bgcol[3] = {.5f,.5f,.5f};
 int nosmooth = 0;
 int swwmenviro = 0;
+unsigned aasamples = 8;
+unsigned resx = SCR_WIDTH, resy = SCR_HEIGHT;
+int defscale = 1;
 
 typedef struct
 {
@@ -365,6 +393,7 @@ float position[3] = {0.f,0.f,-128.f};
 mat_t persp;
 
 float animframe = 0.f, animrate = 30.f;
+float aframe = -1.f, bframe = -1.f;
 int framesize = 0;
 
 void prepare_vbuf( void )
@@ -533,9 +562,9 @@ void rendermesh( void )
 	rotate(&rotx,rotation[0],ROT_X);
 	rotate(&roty,rotation[1],ROT_Y);
 	rotate(&rotz,rotation[2],ROT_Z);
+	mmul(&mv,mv,rotx);
 	mmul(&mv,mv,rotz);
 	mmul(&mv,mv,roty);
-	mmul(&mv,mv,rotx);
 	mv.c[3][0] += position[0];
 	mv.c[3][1] += position[1];
 	mv.c[3][2] += position[2];
@@ -831,6 +860,12 @@ int mesh_load( const char *aniv, const char *data )
 		fclose(datafile);
 		return 8;
 	}
+	if ( !dhead.numpolys || !dhead.numverts )
+	{
+		fprintf(stderr,"Model is empty (no polys/verts)\n");
+		fclose(datafile);
+		return 16;
+	}
 	verts = 0;
 	norms = 0;
 	nvert = dhead.numverts;
@@ -854,6 +889,20 @@ int mesh_load( const char *aniv, const char *data )
 	}
 	for ( int i=0; i<dhead.numpolys; i++ )
 	{
+		int outof = -1;
+		if ( ((outof=dpoly[i].vertices[0]) >= dhead.numverts)
+			|| ((outof=dpoly[i].vertices[1]) >= dhead.numverts)
+			|| ((outof=dpoly[i].vertices[2]) >= dhead.numverts) )
+		{
+			free(dpoly);
+			free(tris);
+			free(refs);
+			fprintf(stderr,"Vertex reference out of bounds on "
+				"poly %d: %d (max: %d)\n",i,outof,
+				dhead.numverts-1);
+			fclose(datafile);
+			return 16;
+		}
 		if ( dpoly[i].type&8 )
 		{
 			wtri[0] = dpoly[i].vertices[0];
@@ -930,6 +979,10 @@ group_recheck:
 	fclose(datafile);
 	if ( !(anivfile = fopen(aniv,"rb")) )
 	{
+		free(tris);
+		free(uverts);
+		for ( int i=0; i<ngroup; i++ ) free(groups[i].tris);
+		free(groups);
 		fprintf(stderr,"Couldn't open anivfile: %s\n",strerror(errno));
 		return 4;
 	}
@@ -948,6 +1001,18 @@ group_recheck:
 	verts = calloc(dhead.numverts*ahead.numframes,sizeof(vect_t));
 	norms = calloc(dhead.numverts*ahead.numframes,sizeof(vect_t));
 	nframe = ahead.numframes;
+	if ( !nframe )
+	{
+		free(verts);
+		free(norms);
+		free(tris);
+		free(uverts);
+		for ( int i=0; i<ngroup; i++ ) free(groups[i].tris);
+		free(groups);
+		fprintf(stderr,"Anivfile has no frames\n");
+		fclose(anivfile);
+		return 16;
+	}
 	// check for Deus Ex's 16-bit vertex format
 	int usedx;
 	if ( (dhead.numverts*8) == ahead.framesize ) usedx = 1;
@@ -972,6 +1037,9 @@ group_recheck:
 			sizeof(dxvert_t));
 		fread(dxvert,sizeof(dxvert_t),ahead.numframes*dhead.numverts,
 			anivfile);
+		// hack to change def scale
+		if ( defscale )
+			tform.scaleX = tform.scaleY = tform.scaleZ = 1./32.;
 	}
 	else
 	{
@@ -1059,8 +1127,19 @@ void tex_load( unsigned n, const char *filename, GLuint *dest )
 {
 	SDL_Surface *tx = IMG_Load(filename);
 	if ( !tx ) return;
-	// set first index to translucent
-	if ( tx->format->palette ) tx->format->palette->colors[0].a = 0;
+	if ( tx->format->palette )
+	{
+		// UE1 hack: if there's no set transparent color, set index 0
+		int alphahack = 1;
+		for ( int i=0; i<tx->format->palette->ncolors; i++ )
+		{
+			if ( tx->format->palette->colors[i].a >= 255 )
+				continue;
+			alphahack = 0;
+			break;
+		}
+		if ( alphahack ) tx->format->palette->colors[0].a = 0;
+	}
 	SDL_Surface *txconv = SDL_ConvertSurfaceFormat(tx,
 		SDL_PIXELFORMAT_RGBA32,0);
 	glGenTextures(1,&dest[n]);
@@ -1073,7 +1152,7 @@ void tex_load( unsigned n, const char *filename, GLuint *dest )
 	SDL_FreeSurface(tx);
 }
 
-int inputs[22] = {0};
+int inputs[24] = {0};
 
 int writepng( const char *filename, unsigned char *fdata, int fw, int fh )
 {
@@ -1114,6 +1193,73 @@ int writepng( const char *filename, unsigned char *fdata, int fw, int fh )
 	return 1;
 }
 
+int drawinfo = 1;
+
+#include "tewifont.h"
+
+void tewidraw( unsigned char *pxdata, int x, int y, char *txt )
+{
+	int cx = x;
+	while ( *txt )
+	{
+		const char *glyph = tewi_glyph(*txt);
+		for ( int j=0; j<TEWI_GHEIGHT; j++ )
+		for ( int i=0; i<TEWI_GWIDTH; i++ )
+		{
+			int o = (y+j)*resx*4 +
+				(cx+i)*4;
+			int col = glyph[i+j*TEWI_GWIDTH];
+			if ( !col ) continue;
+			else if ( col == 1 )
+			{
+				pxdata[o+1] = pxdata[o] = 255;
+				pxdata[o+2] = 0;
+				pxdata[o+3] = 255;
+			}
+			else if ( col == 2 )
+			{
+				pxdata[o+2] = pxdata[o+1] = pxdata[o] = 0;
+				pxdata[o+3] = 255;
+			}
+		}
+		cx += TEWI_GWIDTH;
+		txt++;
+	}
+}
+
+// suboptimal but I'm too lazy to do this the faster way
+void tewirender( unsigned char *tex )
+{
+	// prepare buffers and texture if not done yet
+	if ( !ttex ) glGenTextures(1,&ttex);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D,ttex);
+	glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,resx,resy,0,GL_RGBA,
+		GL_UNSIGNED_BYTE,tex);
+	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+	if ( !tbuf )
+	{
+		float vboe[8] =
+		{
+			-1,-1,
+			 1,-1,
+			-1, 1,
+			 1, 1,
+		};
+		glGenBuffers(1,&tbuf);
+		glBindBuffer(GL_ARRAY_BUFFER,tbuf);
+		glBufferData(GL_ARRAY_BUFFER,sizeof(float)*8,&vboe[0],
+			GL_STATIC_DRAW);
+	}
+	glDisable(GL_DEPTH_TEST);
+	glUseProgram(tprog);
+	glBindBuffer(GL_ARRAY_BUFFER,tbuf);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,sizeof(float)*2,0);
+	glDrawArrays(GL_TRIANGLE_STRIP,0,4);
+}
+
 int main( int argc, char **argv )
 {
 	if ( argc < 3 )
@@ -1127,8 +1273,6 @@ int main( int argc, char **argv )
 			" [-m # <envmask>] [-e # <envmap>]\n");
 		return 1;
 	}
-	unsigned aasamples = 8;
-	unsigned resx = SCR_WIDTH, resy = SCR_HEIGHT;
 	char* tnames[256] = {0};
 	char* bnames[256] = {0};
 	char* mnames[256] = {0};
@@ -1157,6 +1301,7 @@ int main( int argc, char **argv )
 				sscanf(argv[++i],"%f",&tform.scaleX);
 				sscanf(argv[++i],"%f",&tform.scaleY);
 				sscanf(argv[++i],"%f",&tform.scaleZ);
+				defscale = 0;
 			}
 			else if ( !strcmp(argv[i],"-f") )
 			{
@@ -1242,6 +1387,7 @@ int main( int argc, char **argv )
 	SDL_Window *win = SDL_CreateWindow("umeshview",SDL_WINDOWPOS_UNDEFINED,
 		SDL_WINDOWPOS_UNDEFINED,resx,resy,
 		SDL_WINDOW_OPENGL|SDL_WINDOW_SHOWN);
+	unsigned char *ovr = calloc(resx*resy,4);
 	SDL_GLContext *ctx = SDL_GL_CreateContext(win);
 	SDL_GL_SetSwapInterval(1);
 	float fh = tanf(SCR_FOV/360.f*M_PI)*SCR_ZNEAR,
@@ -1283,7 +1429,7 @@ int main( int argc, char **argv )
 		glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
 	}
-	/* compile model and unreferenced vertex shader programs */
+	/* compile shader programs */
 	GLint vert, frag;
 	if ( (frag=compile_shader(GL_FRAGMENT_SHADER,fsrc)) == -1 ) return 32;
 	if ( (vert=compile_shader(GL_VERTEX_SHADER,vsrc)) == -1 ) return 32;
@@ -1311,6 +1457,11 @@ int main( int argc, char **argv )
 	glDeleteShader(vert);
 	wmid = glGetUniformLocation(wprog,"MVP");
 	wiid = glGetUniformLocation(wprog,"Interpolation");
+	if ( (frag=compile_shader(GL_FRAGMENT_SHADER,tfsrc)) == -1 ) return 32;
+	if ( (vert=compile_shader(GL_VERTEX_SHADER,tvsrc)) == -1 ) return 32;
+	if ( (tprog=link_shader(-1,vert,frag)) == -1 ) return 32;
+	glDeleteShader(frag);
+	glDeleteShader(vert);
 	glPointSize(4.f);
 	glEnable(GL_DEPTH_TEST);
 	glEnable(GL_CULL_FACE);
@@ -1374,6 +1525,10 @@ int main( int argc, char **argv )
 					inputs[19] = (e.type==SDL_KEYDOWN);
 				else if ( e.key.keysym.sym == SDLK_PRINTSCREEN )
 					inputs[21] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_l )
+					inputs[22] = (e.type==SDL_KEYDOWN);
+				else if ( e.key.keysym.sym == SDLK_i )
+					inputs[23] = (e.type==SDL_KEYDOWN);
 				if ( e.key.keysym.mod&KMOD_LSHIFT )
 					inputs[20] = 1;
 				else inputs[20] = 0;
@@ -1387,10 +1542,10 @@ int main( int argc, char **argv )
 		if ( inputs[5] ) position[2] -= inputs[20]?.1f:1.f;
 		if ( inputs[6] ) rotation[1] += inputs[20]?1.f:5.f;
 		if ( inputs[7] ) rotation[1] -= inputs[20]?1.f:5.f;
-		if ( inputs[8] ) rotation[2] += inputs[20]?1.f:5.f;
-		if ( inputs[9] ) rotation[2] -= inputs[20]?1.f:5.f;
-		if ( inputs[10] ) rotation[0] += inputs[20]?1.f:5.f;
-		if ( inputs[11] ) rotation[0] -= inputs[20]?1.f:5.f;
+		if ( inputs[8] ) rotation[0] += inputs[20]?1.f:5.f;
+		if ( inputs[9] ) rotation[0] -= inputs[20]?1.f:5.f;
+		if ( inputs[10] ) rotation[2] += inputs[20]?1.f:5.f;
+		if ( inputs[11] ) rotation[2] -= inputs[20]?1.f:5.f;
 		if ( inputs[12] )
 		{
 			inputs[12] = 0;
@@ -1405,6 +1560,7 @@ int main( int argc, char **argv )
 		{
 			inputs[13] = 0;
 			animframe = 0.f;
+			aframe = bframe = -1.f;
 			animrate = 30.f;
 		}
 		if ( inputs[14] ) animrate += 1.f;
@@ -1447,19 +1603,76 @@ int main( int argc, char **argv )
 #endif
 			writepng(fname,tmp,resx,resy);
 			free(tmp);
-			printf("screenshot saved\n");
+			printf("screenshot saved: %s\n",fname);
+		}
+		if ( inputs[22] )
+		{
+			inputs[22] = 0;
+			if ( aframe < 0.f ) aframe = floorf(animframe);
+			else if ( bframe < 0.f )
+			{
+				bframe = floorf(animframe);
+				// hack
+				if ( bframe < aframe ) bframe = nframe;
+			}
+			else aframe = bframe = -1.f;
+		}
+		if ( inputs[23] )
+		{
+			inputs[23] = 0;
+			drawinfo = !drawinfo;
 		}
 		tick = ticker();
 		rendermesh();
+		if ( drawinfo )
+		{
+			memset(ovr,0,resx*resy*4);
+			char txtbuf[64];
+			int curx = 4, cury = 4;
+			snprintf(txtbuf,63,"FPS: %g",1.f/frame);
+			tewidraw(ovr,curx,cury,txtbuf);
+			cury += TEWI_GHEIGHT;
+			if ( nframe > 1 )
+			{
+				if ( (aframe >= 0.f) && (bframe >= 0.f) )
+				{
+					snprintf(txtbuf,63,"Frame: %g [%g "
+					"/ %g]",animframe,aframe,bframe);
+				}
+				else snprintf(txtbuf,63,"Frame: %g",
+					animframe);
+				tewidraw(ovr,curx,cury,txtbuf);
+				cury += TEWI_GHEIGHT;
+				if ( animrate >= 0.f )
+				{
+					snprintf(txtbuf,63,"Rate: %g\t",
+						animrate);
+					tewidraw(ovr,curx,cury,txtbuf);
+					cury += TEWI_GHEIGHT;
+				}
+			}
+			snprintf(txtbuf,63,"Pos: %g, %g, %g",position[0],
+				position[1],position[2]);
+			tewidraw(ovr,curx,cury,txtbuf);
+			cury += TEWI_GHEIGHT;
+			snprintf(txtbuf,63,"Rot: %g, %g, %g",rotation[0],
+				rotation[1],rotation[2]);
+			tewidraw(ovr,curx,cury,txtbuf);
+			tewirender(ovr);
+		}
 		SDL_GL_SwapWindow(win);
 		tock = ticker();
 		frame = (float)(tock-tick)/NANOS_SEC;
-		printf("FPS: %g\tFrame: %g\tRate: %g"
-			"\tPos: %g, %g, %g\tRot: %g %g %g\n",
-			1.f/frame,animframe,animrate,position[0],position[1],
-			position[2],rotation[0],rotation[1],rotation[2]);
 		if ( animrate > 0.f ) animframe += frame*animrate;
-		if ( animframe >= nframe ) animframe = fmodf(animframe,nframe);
+		if ( animframe >= nframe )
+			animframe = fmodf(animframe,nframe);
+		if ( (bframe >= 0.f) && (animframe < aframe) ) animframe = (animframe-floorf(animframe))+aframe;
+		if ( (bframe >= 0.f) && (animframe >= bframe) )
+		{
+			// prevent NaN
+			if ( aframe == bframe ) animframe = aframe;
+			else animframe -= bframe-aframe;
+		}
 	}
 	free(verts);
 	free(norms);
@@ -1469,6 +1682,7 @@ int main( int argc, char **argv )
 	free(groups);
 	free(uverts);
 	SDL_GL_DeleteContext(ctx);
+	free(ovr);
 	SDL_DestroyWindow(win);
 	IMG_Quit();
 	SDL_Quit();

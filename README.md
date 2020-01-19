@@ -17,17 +17,17 @@ format.
   Q and E to move up and down, arrow keys for rotation, page up and page down
   to roll, home to reset animation parameters, end to reset camera parameters.
   insert and delete to control animation speed, space to pause, enter and
-  backspace to step one frame. Shift can be used as a speed modifier, for some
-  of the movements. Texture groups are color coded, unreferenced vertices show
-  as yellow squares. Normally you're required to pass the origin, scale and
-  rotation parameters used for mesh import, as the default transforms may not
-  give the best result. Textures can be loaded and assigned from the command
-  line too, with a variety of supported formats, including PCX files directly
-  exported from UnrealEd. Requires SDL2 (obviously), OpenGL (also obviously),
-  libepoxy and SDL2_image. [TODO] Setting loop points, wireframe rendering,
-  normals rendering, brightmap loading, bounding box display, support for
-  procedural textures (a tool to export these will be made eventually, but it
-  won't be part of this repository).
+  backspace to step one frame, L to set/clear A-B loop points. Shift can be
+  used as a speed modifier, for some of the movements. Texture groups are color
+  coded, unreferenced vertices show as yellow squares. Normally you're required
+  to pass the origin, scale and rotation parameters used for mesh import, as
+  the default transforms may not give the best result. Textures can be loaded
+  and assigned from the command line too, with a variety of supported formats,
+  including PCX files directly exported from UnrealEd. Requires SDL2
+  (obviously), OpenGL (also obviously), libepoxy and SDL2_image. [TODO]
+  wireframe rendering, normals rendering, bounding box display, support
+  for procedural textures (a tool to export these will be made eventually, but
+  it won't be part of this repository).
 - **umesh** : [TODO] The big boy, the visual mesh editor that I initially
   planned to make. Once this one is done, all the other tools will be obsolete.
 - **umodelextract** : A horrible abomination of C code that extracts meshes

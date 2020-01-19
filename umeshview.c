@@ -117,6 +117,7 @@ const char *vsrc =
 "\telse\n"
 "\t\tfCoord = vCoord;\n"
 "\tfNormal = normalize(MV*vec4(fNormal,0.)).xyz;\n"
+"\tif ( fNormal.z < 0 ) fNormal.xyz *= -1;\n"
 "\tfLight = (vec4(0.,0.,128.,0.)).xyz;\n"
 "}\n";
 const char *fsrc =

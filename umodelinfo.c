@@ -230,10 +230,12 @@ int main( int argc, char **argv )
 		sizz;
 	int tminx, tminy, tminz, tmaxx, tmaxy, tmaxz, tmidx, tmidy, tmidz,
 		tsizx, tsizy, tsizz;
-	tminx = tminy = tminz = minx = miny = minz = INT_MAX;
-	tmaxx = tmaxy = tmaxz = maxx = maxy = maxz = INT_MIN;
+	tminx = tminy = tminz = INT_MAX;
+	tmaxx = tmaxy = tmaxz = INT_MIN;
 	for ( int i=0; i<ahead.numframes; i++ )
 	{
+		minx = miny = minz = INT_MAX;
+		maxx = maxy = maxz = INT_MIN;
 		printf("FRAME %d\n",i);
 		for ( int j=0; j<dhead.numverts; j++ )
 		{

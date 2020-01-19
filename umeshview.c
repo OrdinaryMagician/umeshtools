@@ -228,7 +228,7 @@ const char *tfsrc =
 "{\n"
 "\tvec4 res = texture2D(Texture,fCoord);\n"
 "\tif ( res.a < 1. ) discard;\n"
-"\tFragColor = res;\n"
+"\tFragColor = vec4(res.rgb,1.);\n"
 "}\n";
 
 GLint mprog, uprog, wprog, tprog;
@@ -576,6 +576,7 @@ void rendermesh( void )
 	int framea = floorf(animframe);
 	glUniform1f(viid,animframe-framea);
 	int frameb = ceilf(animframe);
+	if ( (bframe >= 0.f) && (frameb > bframe) ) frameb = aframe;
 	if ( frameb >= nframe ) frameb = 0;
 	glBindBuffer(GL_ARRAY_BUFFER,vbuf);
 	glEnableVertexAttribArray(0);
@@ -1252,11 +1253,13 @@ void tewirender( unsigned char *tex )
 		glBufferData(GL_ARRAY_BUFFER,sizeof(float)*8,&vboe[0],
 			GL_STATIC_DRAW);
 	}
-	glDisable(GL_DEPTH_TEST);
 	glUseProgram(tprog);
 	glBindBuffer(GL_ARRAY_BUFFER,tbuf);
 	glEnableVertexAttribArray(0);
 	glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,sizeof(float)*2,0);
+	glDisable(GL_DEPTH_TEST);
+	glBlendFunc(GL_ONE,GL_ZERO);
+	glDepthMask(GL_FALSE);
 	glDrawArrays(GL_TRIANGLE_STRIP,0,4);
 }
 
@@ -1612,8 +1615,13 @@ int main( int argc, char **argv )
 			else if ( bframe < 0.f )
 			{
 				bframe = floorf(animframe);
-				// hack
-				if ( bframe < aframe ) bframe = nframe;
+				// flip
+				if ( bframe < aframe )
+				{
+					float tmp = bframe;
+					aframe = bframe;
+					bframe = tmp;
+				}
 			}
 			else aframe = bframe = -1.f;
 		}
@@ -1667,11 +1675,11 @@ int main( int argc, char **argv )
 		if ( animframe >= nframe )
 			animframe = fmodf(animframe,nframe);
 		if ( (bframe >= 0.f) && (animframe < aframe) ) animframe = (animframe-floorf(animframe))+aframe;
-		if ( (bframe >= 0.f) && (animframe >= bframe) )
+		if ( (bframe >= 0.f) && (animframe >= bframe+1) )
 		{
 			// prevent NaN
 			if ( aframe == bframe ) animframe = aframe;
-			else animframe -= bframe-aframe;
+			else animframe -= (bframe+1)-aframe;
 		}
 	}
 	free(verts);

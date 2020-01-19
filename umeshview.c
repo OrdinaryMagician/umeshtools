@@ -1039,7 +1039,7 @@ group_recheck:
 			anivfile);
 		// hack to change def scale
 		if ( defscale )
-			tform.scaleX = tform.scaleY = tform.scaleZ = 1./32.;
+			tform.scaleX = tform.scaleY = tform.scaleZ = 1./256.;
 	}
 	else
 	{

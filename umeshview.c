@@ -259,6 +259,12 @@ typedef struct
 } vect_t;
 typedef struct
 {
+	vect_t p;
+	int *refs;
+	int nrefs;
+} vert_t;
+typedef struct
+{
 	int v[3];
 	vect_t *n;
 	float uv[3][2];
@@ -283,7 +289,7 @@ typedef struct
 	float p[3], c[3];
 } wvboe_t;
 
-vect_t *verts;
+vert_t *verts;
 vect_t *norms;
 int nvert;
 tri_t *tris;
@@ -416,11 +422,11 @@ void prepare_vbuf( void )
 			for ( int l=0; l<3; l++ )
 			{
 				vboe[m].p[0] = verts[groups[j].tris[k]->v[l]
-					+i*nvert].x;
+					+i*nvert].p.x;
 				vboe[m].p[1] = verts[groups[j].tris[k]->v[l]
-					+i*nvert].y;
+					+i*nvert].p.y;
 				vboe[m].p[2] = verts[groups[j].tris[k]->v[l]
-					+i*nvert].z;
+					+i*nvert].p.z;
 				if ( groups[j].type&PF_227FLATSHADED )
 				{
 					vboe[m].n[0] = groups[j].tris[k]->n[i].x;
@@ -456,9 +462,9 @@ void prepare_vbuf( void )
 	{
 		for ( int j=0; j<nuverts; j++ )
 		{
-			uvboe[k].p[0] = verts[uverts[j]+i*nvert].x;
-			uvboe[k].p[1] = verts[uverts[j]+i*nvert].y;
-			uvboe[k].p[2] = verts[uverts[j]+i*nvert].z;
+			uvboe[k].p[0] = verts[uverts[j]+i*nvert].p.x;
+			uvboe[k].p[1] = verts[uverts[j]+i*nvert].p.y;
+			uvboe[k].p[2] = verts[uverts[j]+i*nvert].p.z;
 			k++;
 		}
 	}
@@ -476,28 +482,28 @@ skip_uvert:
 		// weapon triangle (magenta)
 		for ( int j=0; j<6; j+=2 )
 		{
-			wvboe[j+i*12].p[0] = verts[wtri[j/2]+i*nvert].x;
-			wvboe[j+i*12].p[1] = verts[wtri[j/2]+i*nvert].y;
-			wvboe[j+i*12].p[2] = verts[wtri[j/2]+i*nvert].z;
+			wvboe[j+i*12].p[0] = verts[wtri[j/2]+i*nvert].p.x;
+			wvboe[j+i*12].p[1] = verts[wtri[j/2]+i*nvert].p.y;
+			wvboe[j+i*12].p[2] = verts[wtri[j/2]+i*nvert].p.z;
 			wvboe[j+i*12].c[0] = 255;
 			wvboe[j+i*12].c[1] = 0;
 			wvboe[j+i*12].c[2] = 255;
-			wvboe[j+1+i*12].p[0] = verts[wtri[((j/2)+1)%3]+i*nvert].x;
-			wvboe[j+1+i*12].p[1] = verts[wtri[((j/2)+1)%3]+i*nvert].y;
-			wvboe[j+1+i*12].p[2] = verts[wtri[((j/2)+1)%3]+i*nvert].z;
+			wvboe[j+1+i*12].p[0] = verts[wtri[((j/2)+1)%3]+i*nvert].p.x;
+			wvboe[j+1+i*12].p[1] = verts[wtri[((j/2)+1)%3]+i*nvert].p.y;
+			wvboe[j+1+i*12].p[2] = verts[wtri[((j/2)+1)%3]+i*nvert].p.z;
 			wvboe[j+1+i*12].c[0] = 255;
 			wvboe[j+1+i*12].c[1] = 0;
 			wvboe[j+1+i*12].c[2] = 255;
 		}
 		// attach coords (rgb)
 		vect_t o, x, y, z;
-		vadd(&o,verts[wtri[0]+i*nvert],verts[wtri[1]+i*nvert]);
+		vadd(&o,verts[wtri[0]+i*nvert].p,verts[wtri[1]+i*nvert].p);
 		vscale(&o,o,.5f);
-		vsub(&z,verts[wtri[0]+i*nvert],verts[wtri[1]+i*nvert]);
+		vsub(&z,verts[wtri[0]+i*nvert].p,verts[wtri[1]+i*nvert].p);
 		normalize(&z);
 		vect_t ac, ab;
-		vsub(&ac,verts[wtri[2]+i*nvert],verts[wtri[0]+i*nvert]);
-		vsub(&ab,verts[wtri[1]+i*nvert],verts[wtri[0]+i*nvert]);
+		vsub(&ac,verts[wtri[2]+i*nvert].p,verts[wtri[0]+i*nvert].p);
+		vsub(&ab,verts[wtri[1]+i*nvert].p,verts[wtri[0]+i*nvert].p);
 		normalize(&ac);
 		normalize(&ab);
 		cross(&y,ac,ab);
@@ -1000,7 +1006,7 @@ group_recheck:
 		fclose(anivfile);
 		return 8;
 	}
-	verts = calloc(dhead.numverts*ahead.numframes,sizeof(vect_t));
+	verts = calloc(dhead.numverts*ahead.numframes,sizeof(vert_t));
 	norms = calloc(dhead.numverts*ahead.numframes,sizeof(vect_t));
 	nframe = ahead.numframes;
 	if ( !nframe )
@@ -1074,47 +1080,47 @@ group_recheck:
 		{
 			if ( usedx )
 			{
-				verts[j+vs].x = dxvert[j+vs].x;
-				verts[j+vs].y = dxvert[j+vs].y;
-				verts[j+vs].z = dxvert[j+vs].z;
+				verts[j+vs].p.x = dxvert[j+vs].x;
+				verts[j+vs].p.y = dxvert[j+vs].y;
+				verts[j+vs].p.z = dxvert[j+vs].z;
 			}
 			else
 			{
-				verts[j+vs].x = unpackuvert(avert[j+vs],0)/32.f;
-				verts[j+vs].y = unpackuvert(avert[j+vs],1)/32.f;
-				verts[j+vs].z = unpackuvert(avert[j+vs],2)/64.f;
+				verts[j+vs].p.x = unpackuvert(avert[j+vs],0)/32.f;
+				verts[j+vs].p.y = unpackuvert(avert[j+vs],1)/32.f;
+				verts[j+vs].p.z = unpackuvert(avert[j+vs],2)/64.f;
 			}
-			transform(&verts[j+vs],&tform);
+			transform(&(verts[j+vs].p),&tform);
 		}
-		// compute facet normals
+		// compute facet normals and set vertex refs
 		for ( int j=0; j<dhead.numpolys; j++ )
 		{
 			vect_t dir[2], norm;
-			vsub(&dir[0],verts[tris[j].v[1]+vs],
-				verts[tris[j].v[0]+vs]);
-			vsub(&dir[1],verts[tris[j].v[2]+vs],
-				verts[tris[j].v[0]+vs]);
+			vsub(&dir[0],verts[tris[j].v[1]+vs].p,
+				verts[tris[j].v[0]+vs].p);
+			vsub(&dir[1],verts[tris[j].v[2]+vs].p,
+				verts[tris[j].v[0]+vs].p);
 			cross(&norm,dir[0],dir[1]);
 			normalize(&norm);
 			if ( !tris[j].n ) tris[j].n = calloc(ahead.numframes,
 				sizeof(vect_t));
 			tris[j].n[i] = norm;
+			for ( int k=0; k<3; k++ )
+			{
+				vert_t *v = &verts[tris[j].v[k]+vs];
+				if ( !v->refs ) v->refs = malloc(sizeof(int));
+				else v->refs = realloc(v->refs,sizeof(int)*(v->nrefs+1));
+				v->refs[v->nrefs] = j;
+				v->nrefs++;
+			}
 		}
 		// compute vertex normals
 		for ( int j=0; j<dhead.numverts; j++ )
 		{
 			vect_t nsum = {0};
-			int t = 0;
-			for ( int k=0; k<dhead.numpolys; k++ )
-			{
-				if ( (tris[k].v[0] != j)
-					&& (tris[k].v[1] != j)
-					&& (tris[k].v[2] != j) )
-					continue;
-				vadd(&nsum,nsum,tris[k].n[i]);
-				t++;
-			}
-			vscale(&nsum,nsum,1.f/t);
+			for ( int k=0; k<verts[j+vs].nrefs; k++ )
+				vadd(&nsum,nsum,tris[verts[j+vs].refs[k]].n[i]);
+			vscale(&nsum,nsum,1.f/verts[j+vs].nrefs);
 			norms[j+vs] = nsum;
 		}
 	}

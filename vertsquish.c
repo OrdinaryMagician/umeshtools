@@ -103,7 +103,7 @@ int main( int argc, char **argv )
 			}
 		}
 	}
-	if ( !(fout = fopen(argv[2],"wb")) )
+	if ( !(fout = fopen(argv[a+1],"wb")) )
 	{
 		fprintf(stderr,"Couldn't open output: %s\n",strerror(errno));
 		free(framedata);
